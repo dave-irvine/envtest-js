@@ -73,6 +73,14 @@ async function exportPrivateKeyPem(key: CryptoKey): Promise<string> {
 }
 
 /**
+ * CN of a PEM certificate's subject — for a Kubernetes client certificate,
+ * the username the apiserver authenticates it as ("" when absent).
+ */
+export function certificateCommonName(certPem: string): string {
+  return new x509.X509Certificate(certPem).subjectName.getField("CN")[0] ?? "";
+}
+
+/**
  * A minimal throwaway certificate authority, equivalent to controller-runtime's
  * internal "tinyca": one self-signed CA that can mint serving and client certs.
  */

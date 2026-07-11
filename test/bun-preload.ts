@@ -12,6 +12,9 @@ const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtur
 registerEnvtest(
   { beforeAll, afterAll },
   {
+    // See test/e2e-global-setup.ts: never let an inherited
+    // USE_EXISTING_CLUSTER point this suite at a real cluster.
+    useExistingCluster: false,
     version: process.env.ENVTEST_K8S_VERSION,
     crdDirectoryPaths: [
       path.join(FIXTURES, "crontab-crd.yaml"),

@@ -5,14 +5,15 @@ import path from "node:path";
 import { APIServer, type APIServerCertFiles } from "./controlplane/apiserver.js";
 import { resolveBinaries, type BinaryPaths, type ResolveBinariesOptions } from "./setup/assets.js";
 import {
+  deleteCRDs,
   installCRDs,
   uninstallCRDs,
   type CRDManifest,
   type InstallCRDsOptions,
 } from "./client/crd.js";
 import { Etcd } from "./controlplane/etcd.js";
-import { buildKubeconfig } from "./client/kubeconfig.js";
-import { generateServiceAccountKeys, TinyCA } from "./controlplane/pki.js";
+import { buildKubeconfig, loadKubeconfig, normalizeServerURL } from "./client/kubeconfig.js";
+import { certificateCommonName, generateServiceAccountKeys, TinyCA } from "./controlplane/pki.js";
 import { getFreePort } from "./controlplane/ports.js";
 import { type RestConfig } from "./client/rest.js";
 import { type ExtraArgs } from "./controlplane/args.js";
@@ -20,8 +21,10 @@ import {
   installWebhooks,
   readWebhookManifests,
   rewriteWebhookManifests,
+  uninstallWebhooks,
   waitForWebhookServer,
   type WebhookConfigurationManifest,
+  type WebhookConfigurationRef,
   type WebhookInstallOptions,
 } from "./client/webhook.js";
 
@@ -41,7 +44,31 @@ const ADMIN_GROUPS = ["system:masters"];
 
 const b64 = (pem: string) => Buffer.from(pem).toString("base64");
 
+/** Port a server URL points at (attach-mode servers are always https). */
+function serverPort(server: string): number {
+  const port = new URL(server).port;
+  return port ? Number(port) : 443;
+}
+
 export interface TestEnvironmentOptions extends ResolveBinariesOptions {
+  /**
+   * Attach to a pre-existing cluster instead of spawning etcd +
+   * kube-apiserver (upstream: Environment.UseExistingCluster). When
+   * undefined, the USE_EXISTING_CLUSTER environment variable ("true",
+   * case-insensitive) decides, exactly like upstream. Credentials come from
+   * `config` when set, else the kubeconfig at KUBECONFIG (first readable
+   * entry) or ~/.kube/config — client-certificate kubeconfigs only (what
+   * kind/k3d/minikube issue); token, exec-plugin, and basic auth are not
+   * supported. CRDs and webhooks still install; stop() leaves the cluster
+   * running, INCLUDING anything installed into it (see stop()).
+   */
+  useExistingCluster?: boolean;
+  /**
+   * Explicit credentials for the existing cluster (upstream:
+   * Environment.Config), taking precedence over kubeconfig discovery. Only
+   * consulted when attaching to an existing cluster.
+   */
+  config?: RestConfig;
   /** CRD manifests (files or directories) to install after startup. */
   crdDirectoryPaths?: string[];
   /**
@@ -133,10 +160,18 @@ export interface EnvtestConfig extends RestConfig {
   /** Path of a ready-to-use kubeconfig file (written into the env's temp dir). */
   kubeconfigPath: string;
   kubeconfigYaml: string;
+  /**
+   * Identity the credentials authenticate as: envtest-admin for an owned
+   * control plane; the client certificate's CN when attached to an
+   * existing cluster (kubeconfig user-entry names are arbitrary labels
+   * and are deliberately ignored).
+   */
   user: string;
-  etcdURL: string;
+  /** Absent when attached to an existing cluster (useExistingCluster). */
+  etcdURL?: string;
   apiServerPort: number;
-  binaries: BinaryPaths;
+  /** Absent when attached to an existing cluster (useExistingCluster). */
+  binaries?: BinaryPaths;
   /** Names of CRDs installed at startup. */
   installedCRDs: string[];
   /** Present when the environment was started with webhookInstallOptions. */
@@ -150,6 +185,9 @@ export interface EnvtestConfig extends RestConfig {
  * Full-fidelity PKI: a throwaway CA signs the apiserver's serving cert and
  * an admin client cert (CN=envtest-admin, O=system:masters); an RSA keypair
  * signs real service-account tokens. No insecure-skip-tls-verify anywhere.
+ *
+ * Can instead attach to a pre-existing cluster via kubeconfig — see
+ * TestEnvironmentOptions.useExistingCluster.
  */
 export class TestEnvironment {
   private etcd: Etcd | undefined;
@@ -158,6 +196,10 @@ export class TestEnvironment {
   private _config: EnvtestConfig | undefined;
   /** Kept after start() so addUser() can mint further client certs. */
   private ca: TinyCA | undefined;
+  /** True while attached to an existing cluster (useExistingCluster). */
+  private attachedToExisting = false;
+  /** Webhook configurations start() installed, for cleanUpAfterUse. */
+  private installedWebhooks: WebhookConfigurationRef[] = [];
   private userKubeconfigNames = new Set<string>();
 
   constructor(private readonly options: TestEnvironmentOptions = {}) {}
@@ -172,55 +214,22 @@ export class TestEnvironment {
     if (this._config) throw new Error("TestEnvironment already started");
     const opts = this.options;
 
-    const binaries = await resolveBinaries(opts);
+    // Upstream parity: the option wins when set; otherwise the
+    // USE_EXISTING_CLUSTER environment variable ("true", case-insensitive)
+    // selects attach mode.
+    const useExisting =
+      opts.useExistingCluster ??
+      (process.env.USE_EXISTING_CLUSTER ?? "").toLowerCase() === "true";
 
     this.workDir = await fsp.mkdtemp(path.join(os.tmpdir(), "envtest-"));
-    const certDir = path.join(this.workDir, "certs");
-    const etcdDataDir = path.join(this.workDir, "etcd-data");
-    await fsp.mkdir(certDir, { recursive: true });
-    await fsp.mkdir(etcdDataDir, { recursive: true });
 
     try {
-      // --- PKI ---
-      // A custom listen address must land in the serving cert's SANs, or
-      // clients dialing it fail TLS verification (upstream appends the
-      // configured address the same way). Wildcards aren't dialable
-      // addresses, and the loopback names are already in the default set.
-      const listenAddress = opts.listenAddress ?? "127.0.0.1";
-      const servingNames = [...API_SERVER_CERT_NAMES];
-      if (!["127.0.0.1", "::1", "localhost", "0.0.0.0", "::"].includes(listenAddress)) {
-        servingNames.push(listenAddress);
-      }
-      const ca = await TinyCA.create();
-      this.ca = ca;
-      const serving = await ca.newServingCert(...servingNames);
-      const admin = await ca.newClientCert(ADMIN_USER, ADMIN_GROUPS);
-      const saKeys = await generateServiceAccountKeys();
-
-      const certFiles: APIServerCertFiles = {
-        caCert: path.join(certDir, "ca.crt"),
-        servingCert: path.join(certDir, "apiserver.crt"),
-        servingKey: path.join(certDir, "apiserver.key"),
-        saPublicKey: path.join(certDir, "sa-signer.pub"),
-        saPrivateKey: path.join(certDir, "sa-signer.key"),
-      };
-      // Private keys are owner-only; certificates are public material.
-      // (The mkdtemp workdir is already 0700 on POSIX — defense in depth.)
-      const PRIVATE = { mode: 0o600 } as const;
-      await Promise.all([
-        fsp.writeFile(certFiles.caCert, ca.certificatePem),
-        fsp.writeFile(certFiles.servingCert, serving.certPem),
-        fsp.writeFile(certFiles.servingKey, serving.keyPem, PRIVATE),
-        fsp.writeFile(certFiles.saPublicKey, saKeys.publicKeyPem),
-        fsp.writeFile(certFiles.saPrivateKey, saKeys.privateKeyPem, PRIVATE),
-        fsp.writeFile(path.join(certDir, "admin.crt"), admin.certPem),
-        fsp.writeFile(path.join(certDir, "admin.key"), admin.keyPem, PRIVATE),
-      ]);
-
       // --- webhook prep (cert, port, manifest rewrite) ---
       // Like upstream's PrepWithoutInstalling: a *separate* throwaway CA
       // signs the webhook serving cert, so trust flows only through the
-      // caBundle we inject — never the cluster CA.
+      // caBundle we inject — never the cluster CA. Prep is local-only and
+      // runs before anything is spawned or dialed, so bad webhook options
+      // fail in milliseconds instead of after a control-plane boot.
       let webhookPrep:
         | { serving: WebhookServing; manifests: WebhookConfigurationManifest[] }
         | undefined;
@@ -263,46 +272,15 @@ export class TestEnvironment {
         };
       }
 
-      // --- etcd ---
-      this.etcd = new Etcd({
-        binary: binaries.etcd,
-        dataDir: etcdDataDir,
-        extraArgs: opts.etcdFlags,
-        readyPollIntervalMs: opts.readyPollIntervalMs,
-        startTimeoutMs: opts.startTimeoutMs,
-        stopTimeoutMs: opts.stopTimeoutMs,
-        attachOutput: opts.attachOutput,
-      });
-      await this.etcd.start();
-
-      // --- kube-apiserver ---
-      this.apiServer = new APIServer({
-        binary: binaries.kubeApiserver,
-        etcdURL: this.etcd.url,
-        certDir,
-        certFiles,
-        listenAddress: opts.listenAddress,
-        securePort: opts.securePort,
-        adminRestConfigFor: (server) => ({
-          server,
-          caPem: ca.certificatePem,
-          certPem: admin.certPem,
-          keyPem: admin.keyPem,
-        }),
-        extraArgs: opts.apiServerFlags,
-        readyPollIntervalMs: opts.readyPollIntervalMs,
-        startTimeoutMs: opts.startTimeoutMs,
-        stopTimeoutMs: opts.stopTimeoutMs,
-        attachOutput: opts.attachOutput,
-      });
-      await this.apiServer.start();
-
-      const restConfig: RestConfig = {
-        server: this.apiServer.url,
-        caPem: ca.certificatePem,
-        certPem: admin.certPem,
-        keyPem: admin.keyPem,
-      };
+      let restConfig: RestConfig;
+      let user: string;
+      let binaries: BinaryPaths | undefined;
+      if (useExisting) {
+        this.attachedToExisting = true;
+        ({ restConfig, user } = await this.attachExistingCluster());
+      } else {
+        ({ restConfig, user, binaries } = await this.startControlPlane());
+      }
 
       // --- webhooks (before CRDs, as upstream does) ---
       let webhook: WebhookServing | undefined;
@@ -311,19 +289,23 @@ export class TestEnvironment {
           restConfig,
           webhookPrep.manifests,
         );
+        this.installedWebhooks = webhookPrep.manifests.map((m) => ({
+          kind: m.kind,
+          name: m.metadata.name,
+        }));
         webhook = webhookPrep.serving;
       }
 
       // --- kubeconfig ---
       const kubeconfigYaml = buildKubeconfig({
-        server: this.apiServer.url,
-        caPem: ca.certificatePem,
-        clientCertPem: admin.certPem,
-        clientKeyPem: admin.keyPem,
-        userName: ADMIN_USER,
+        server: restConfig.server,
+        caPem: restConfig.caPem,
+        clientCertPem: restConfig.certPem,
+        clientKeyPem: restConfig.keyPem,
+        userName: user,
       });
       const kubeconfigPath = path.join(this.workDir, "kubeconfig");
-      // The kubeconfig inlines the admin client key: owner-only.
+      // The kubeconfig inlines the client key: owner-only.
       await fsp.writeFile(kubeconfigPath, kubeconfigYaml, { mode: 0o600 });
 
       // --- CRDs ---
@@ -345,9 +327,9 @@ export class TestEnvironment {
         keyData: b64(restConfig.keyPem),
         kubeconfigPath,
         kubeconfigYaml,
-        user: ADMIN_USER,
-        etcdURL: this.etcd.url,
-        apiServerPort: this.apiServer.port,
+        user,
+        etcdURL: this.etcd?.url,
+        apiServerPort: this.apiServer?.port ?? serverPort(restConfig.server),
         binaries,
         installedCRDs,
         webhook,
@@ -357,6 +339,148 @@ export class TestEnvironment {
       await this.stop().catch(() => {});
       throw err;
     }
+  }
+
+  /** Spawn etcd + kube-apiserver with a full-fidelity throwaway PKI. */
+  private async startControlPlane(): Promise<{
+    restConfig: RestConfig;
+    user: string;
+    binaries: BinaryPaths;
+  }> {
+    const opts = this.options;
+    const workDir = this.workDir!;
+    const binaries = await resolveBinaries(opts);
+
+    const certDir = path.join(workDir, "certs");
+    const etcdDataDir = path.join(workDir, "etcd-data");
+    await fsp.mkdir(certDir, { recursive: true });
+    await fsp.mkdir(etcdDataDir, { recursive: true });
+
+    // --- PKI ---
+    // A custom listen address must land in the serving cert's SANs, or
+    // clients dialing it fail TLS verification (upstream appends the
+    // configured address the same way). Wildcards aren't dialable
+    // addresses, and the loopback names are already in the default set.
+    const listenAddress = opts.listenAddress ?? "127.0.0.1";
+    const servingNames = [...API_SERVER_CERT_NAMES];
+    if (!["127.0.0.1", "::1", "localhost", "0.0.0.0", "::"].includes(listenAddress)) {
+      servingNames.push(listenAddress);
+    }
+    const ca = await TinyCA.create();
+    this.ca = ca;
+    const serving = await ca.newServingCert(...servingNames);
+    const admin = await ca.newClientCert(ADMIN_USER, ADMIN_GROUPS);
+    const saKeys = await generateServiceAccountKeys();
+
+    const certFiles: APIServerCertFiles = {
+      caCert: path.join(certDir, "ca.crt"),
+      servingCert: path.join(certDir, "apiserver.crt"),
+      servingKey: path.join(certDir, "apiserver.key"),
+      saPublicKey: path.join(certDir, "sa-signer.pub"),
+      saPrivateKey: path.join(certDir, "sa-signer.key"),
+    };
+    // Private keys are owner-only; certificates are public material.
+    // (The mkdtemp workdir is already 0700 on POSIX — defense in depth.)
+    const PRIVATE = { mode: 0o600 } as const;
+    await Promise.all([
+      fsp.writeFile(certFiles.caCert, ca.certificatePem),
+      fsp.writeFile(certFiles.servingCert, serving.certPem),
+      fsp.writeFile(certFiles.servingKey, serving.keyPem, PRIVATE),
+      fsp.writeFile(certFiles.saPublicKey, saKeys.publicKeyPem),
+      fsp.writeFile(certFiles.saPrivateKey, saKeys.privateKeyPem, PRIVATE),
+      fsp.writeFile(path.join(certDir, "admin.crt"), admin.certPem),
+      fsp.writeFile(path.join(certDir, "admin.key"), admin.keyPem, PRIVATE),
+    ]);
+
+    // --- etcd ---
+    this.etcd = new Etcd({
+      binary: binaries.etcd,
+      dataDir: etcdDataDir,
+      extraArgs: opts.etcdFlags,
+      readyPollIntervalMs: opts.readyPollIntervalMs,
+      startTimeoutMs: opts.startTimeoutMs,
+      stopTimeoutMs: opts.stopTimeoutMs,
+      attachOutput: opts.attachOutput,
+    });
+    await this.etcd.start();
+
+    // --- kube-apiserver ---
+    this.apiServer = new APIServer({
+      binary: binaries.kubeApiserver,
+      etcdURL: this.etcd.url,
+      certDir,
+      certFiles,
+      listenAddress: opts.listenAddress,
+      securePort: opts.securePort,
+      adminRestConfigFor: (server) => ({
+        server,
+        caPem: ca.certificatePem,
+        certPem: admin.certPem,
+        keyPem: admin.keyPem,
+      }),
+      extraArgs: opts.apiServerFlags,
+      readyPollIntervalMs: opts.readyPollIntervalMs,
+      startTimeoutMs: opts.startTimeoutMs,
+      stopTimeoutMs: opts.stopTimeoutMs,
+      attachOutput: opts.attachOutput,
+    });
+    await this.apiServer.start();
+
+    return {
+      restConfig: {
+        server: this.apiServer.url,
+        caPem: ca.certificatePem,
+        certPem: admin.certPem,
+        keyPem: admin.keyPem,
+      },
+      user: ADMIN_USER,
+      binaries,
+    };
+  }
+
+  /**
+   * Resolve credentials for a pre-existing cluster (upstream: "using
+   * existing cluster"): an explicitly provided config wins, else the
+   * kubeconfig at KUBECONFIG / ~/.kube/config.
+   */
+  private async attachExistingCluster(): Promise<{ restConfig: RestConfig; user: string }> {
+    const provided = this.options.config;
+    let restConfig: RestConfig;
+    let source: string;
+    if (provided) {
+      // Copy, not adopt: later caller mutation must not affect the running
+      // environment.
+      restConfig = {
+        server: normalizeServerURL(provided.server, "options.config.server"),
+        caPem: provided.caPem,
+        certPem: provided.certPem,
+        keyPem: provided.keyPem,
+      };
+      source = "options.config";
+    } else {
+      const loaded = await loadKubeconfig();
+      restConfig = loaded.config;
+      source = `kubeconfig ${loaded.path}`;
+    }
+    // The username is the client certificate's CN — the identity the
+    // apiserver maps the credentials to. Kubeconfig user-entry names are
+    // arbitrary labels that need not match (kind names its entry
+    // "kind-kind" while the cert CN is "kubernetes-admin"), so the CN is
+    // authoritative for both sources.
+    let user: string;
+    try {
+      user = certificateCommonName(restConfig.certPem);
+    } catch (err) {
+      throw new Error(
+        `useExistingCluster: ${source} client certificate is not parseable: ${(err as Error).message}`,
+      );
+    }
+    if (!user) {
+      throw new Error(
+        `useExistingCluster: ${source} client certificate has no CN — Kubernetes derives the username from it`,
+      );
+    }
+    return { restConfig, user };
   }
 
   private conversionWebhookFor(
@@ -373,6 +497,11 @@ export class TestEnvironment {
    */
   async addUser(user: User): Promise<AuthenticatedUser> {
     const config = this.config; // throws when not started
+    if (this.attachedToExisting) {
+      throw new Error(
+        "addUser is not supported with useExistingCluster: the environment does not own the cluster's CA",
+      );
+    }
     if (!user.name) throw new Error("user name is required");
     if (!this.ca || !this.workDir) throw new Error("TestEnvironment not started");
 
@@ -450,8 +579,31 @@ export class TestEnvironment {
     await waitForWebhookServer(webhook.host, webhook.port, { timeoutMs, caPem: webhook.caPem });
   }
 
-  /** Tear down the control plane and delete all temporary state. */
+  /**
+   * Tear down the control plane and delete all temporary state. When
+   * attached to an existing cluster there is nothing to tear down — the
+   * cluster (including any installed CRDs and webhook configurations) keeps
+   * running, as upstream's Stop does; only local temp state is removed.
+   * Beware: installed webhook configurations point at this (now dead) test
+   * process, so on a shared cluster a failurePolicy:Fail webhook will block
+   * matching requests until deleted — opt into
+   * webhookInstallOptions.cleanUpAfterUse (and its upstream-parity CRD
+   * sibling, crdInstallOptions.cleanUpAfterUse) to have stop() remove what
+   * start() installed.
+   */
   async stop(): Promise<void> {
+    // CleanUpAfterUse runs first, while the apiserver is still reachable
+    // (upstream Stop() orders it the same way). Only start()-time installs
+    // are tracked; anything added later via installCRDs() is the caller's
+    // to remove. Like upstream, a cleanup failure aborts stop().
+    if (this._config) {
+      if (this.options.crdInstallOptions?.cleanUpAfterUse) {
+        await deleteCRDs(this._config, this._config.installedCRDs);
+      }
+      if (this.options.webhookInstallOptions?.cleanUpAfterUse) {
+        await uninstallWebhooks(this._config, this.installedWebhooks);
+      }
+    }
     // Reverse startup order: apiserver first so etcd doesn't vanish under it.
     await this.apiServer?.stop();
     await this.etcd?.stop();
@@ -459,6 +611,8 @@ export class TestEnvironment {
     this.etcd = undefined;
     this._config = undefined;
     this.ca = undefined;
+    this.attachedToExisting = false;
+    this.installedWebhooks = [];
     this.userKubeconfigNames.clear();
     if (this.workDir) {
       // etcd on Windows can hold file locks for a beat after exit.
