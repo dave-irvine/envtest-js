@@ -1,11 +1,5 @@
 # TODO
 
-## Upstream parity gaps (from auditing upstream's test suites)
-
-Features upstream envtest implements and tests that envtest-js doesn't have yet:
-
-- [ ] `UseExistingCluster`: attach to a pre-existing cluster via kubeconfig instead of spawning a control plane (envtest_test.go Stop cleanup test exercises it).
-
 ## Later / nice-to-have
 
 - [ ] Process-group kill on stop (process_test.go "stops the full process group including all its children") — moot for etcd/kube-apiserver, which don't fork; revisit only if we ever manage a forking child process.

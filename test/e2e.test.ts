@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { withEnv } from "./helpers/env.js";
 import { getEnvtestConfig } from "./helpers/envtest.js";
 import {
   installCRDs,
@@ -14,6 +15,7 @@ import {
   uninstallCRDs,
   waitForWebhookServer,
   type EnvtestConfig,
+  type RestConfig,
 } from "../src/index.js";
 import { getFreePort } from "../src/controlplane/ports.js";
 import {
@@ -25,23 +27,40 @@ import {
 const execFileP = promisify(execFile);
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 
+/** Deletion is asynchronous: poll until the object is gone, like upstream's Eventually. */
+async function waitForGone(
+  config: RestConfig,
+  apiPath: string,
+  timeoutMs = 10_000,
+): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  let status: number;
+  do {
+    status = (await restRequest(config, "GET", apiPath)).status;
+    if (status !== 404) await new Promise((r) => setTimeout(r, 100));
+  } while (status !== 404 && Date.now() < deadline);
+  return status;
+}
+
 // The control plane itself is started once for the whole run by our own
 // glue, which this suite dogfoods: test/e2e-global-setup.ts under vitest,
 // test/bun-preload.ts under bun:test. Binaries download on first run
 // (~30MB, cached afterwards).
 describe("e2e: real control plane", () => {
   let config: EnvtestConfig;
+  let kubectl: string;
   let webhookServer: TestWebhookServer;
 
   beforeAll(async () => {
     config = await getEnvtestConfig();
+    kubectl = config.binaries!.kubectl; // the shared env owns its control plane
     webhookServer = await startTestWebhookServer(config);
     // Warm kubectl's first execution here, where the timeout is generous:
     // on Windows, Defender scans a binary the first time it runs (seconds on
     // CI runners). etcd/kube-apiserver were already executed (and scanned)
     // by the control-plane boot in global setup; kubectl would otherwise pay
     // its scan inside whichever test happens to call it first.
-    await execFileP(config.binaries.kubectl, ["version", "--client"]);
+    await execFileP(kubectl, ["version", "--client"]);
   }, 60_000);
 
   afterAll(async () => {
@@ -221,17 +240,9 @@ describe("e2e: real control plane", () => {
     const deleted = await uninstallCRDs(config, [gadgetCRD]);
     expect(deleted).toEqual(["gadgets.uninstall.example.com"]);
 
-    // Deletion is asynchronous: poll until the CRD is gone, as upstream's
-    // test does with Eventually.
     const crdPath =
       "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/gadgets.uninstall.example.com";
-    const deadline = Date.now() + 10_000;
-    let status;
-    do {
-      status = (await restRequest(config, "GET", crdPath)).status;
-      if (status !== 404) await new Promise((r) => setTimeout(r, 100));
-    } while (status !== 404 && Date.now() < deadline);
-    expect(status).toBe(404);
+    expect(await waitForGone(config, crdPath)).toBe(404);
 
     // Uninstalling already-absent CRDs is a no-op, like upstream
     // (IsNotFound errors are ignored).
@@ -239,7 +250,7 @@ describe("e2e: real control plane", () => {
   });
 
   it("writes a kubeconfig that the real kubectl accepts", async () => {
-    const { stdout } = await execFileP(config.binaries.kubectl, [
+    const { stdout } = await execFileP(kubectl, [
       "--kubeconfig",
       config.kubeconfigPath,
       "get",
@@ -252,6 +263,92 @@ describe("e2e: real control plane", () => {
     const parsed = JSON.parse(stdout);
     expect(parsed.items).toHaveLength(1);
     expect(parsed.items[0].metadata.name).toBe("my-cron");
+  });
+
+  // Upstream Stop() returns before ControlPlane.Stop() when using an
+  // existing cluster (server.go) — an attached environment installs into
+  // the shared cluster, and stopping it must NOT tear that cluster down.
+  // Runs under Bun too: the attached env dials the same cluster with the
+  // same CA, so the process-wide TLS trust cache is a non-issue.
+  it("attaches to the running cluster via kubeconfig; stop() leaves it running", async () => {
+    const attachCRD = {
+      apiVersion: "apiextensions.k8s.io/v1",
+      kind: "CustomResourceDefinition",
+      metadata: { name: "attachments.existing.example.com" },
+      spec: {
+        group: "existing.example.com",
+        names: {
+          kind: "Attachment",
+          listKind: "AttachmentList",
+          plural: "attachments",
+          singular: "attachment",
+        },
+        scope: "Namespaced",
+        versions: [
+          {
+            name: "v1",
+            served: true,
+            storage: true,
+            schema: { openAPIV3Schema: { type: "object" } },
+          },
+        ],
+      },
+    };
+    const crdPath =
+      "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/attachments.existing.example.com";
+
+    const webhookPath =
+      "/apis/admissionregistration.k8s.io/v1/validatingwebhookconfigurations/envtest-attach-cleanup";
+    const env = new TestEnvironment({
+      useExistingCluster: true,
+      crds: [attachCRD],
+      // Leave the shared cluster as we found it: CRD cleanup is upstream
+      // parity (CRDInstallOptions.CleanUpAfterUse); webhook-configuration
+      // cleanup is our extension — upstream would leave the configuration
+      // pointing at this dead test process.
+      crdInstallOptions: { cleanUpAfterUse: true },
+      webhookInstallOptions: {
+        paths: [path.join(FIXTURES, "attach", "cleanup-webhook.yaml")],
+        cleanUpAfterUse: true,
+      },
+    });
+    try {
+      const attached = await withEnv({ KUBECONFIG: config.kubeconfigPath }, () => env.start());
+      expect(attached.server).toBe(config.server);
+      expect(attached.user).toBe("envtest-admin");
+      expect(attached.binaries).toBeUndefined();
+      expect(attached.etcdURL).toBeUndefined();
+      expect(attached.installedCRDs).toEqual(["attachments.existing.example.com"]);
+      expect(attached.webhook!.configurationNames).toEqual(["envtest-attach-cleanup"]);
+
+      // The webhook configuration landed on the shared cluster too.
+      const hook = await restRequestOk(config, "GET", webhookPath);
+      expect(hook.json.metadata.name).toBe("envtest-attach-cleanup");
+
+      // The parsed credentials authenticate as the kubeconfig's identity.
+      const whoami = await restRequestOk(
+        attached,
+        "POST",
+        "/apis/authentication.k8s.io/v1/selfsubjectreviews",
+        { apiVersion: "authentication.k8s.io/v1", kind: "SelfSubjectReview" },
+      );
+      expect(whoami.json.status.userInfo.username).toBe("envtest-admin");
+
+      // The CRD landed on the SAME cluster, visible through the original config.
+      const seen = await restRequestOk(config, "GET", crdPath);
+      expect(seen.json.metadata.name).toBe("attachments.existing.example.com");
+    } finally {
+      await env.stop();
+    }
+
+    // The shared control plane survived the attached environment's stop().
+    const version = await restRequestOk(config, "GET", "/version");
+    expect(version.json.gitVersion).toMatch(/^v\d+\.\d+\./);
+
+    // cleanUpAfterUse removed both installs from the shared cluster during
+    // stop(), while it could still reach the apiserver.
+    expect(await waitForGone(config, crdPath)).toBe(404);
+    expect(await waitForGone(config, webhookPath)).toBe(404);
   });
 
   // Node-only: this validates the official client against our kubeconfig;
@@ -340,7 +437,7 @@ describe("e2e: real control plane", () => {
       const { envtest } = await import("../src/glue/bun.js");
       const user = await envtest().addUser({ name: "bun-user", groups: ["bun-group"] });
 
-      const { stdout } = await execFileP(config.binaries.kubectl, [
+      const { stdout } = await execFileP(kubectl, [
         "--kubeconfig",
         user.kubeconfigPath,
         "auth",
@@ -457,7 +554,7 @@ if (!process.versions.bun) {
         expect(denied.status).toBe(403);
 
         // The written kubeconfig is kubectl-ready.
-        const { stdout } = await execFileP(config.binaries.kubectl, [
+        const { stdout } = await execFileP(config.binaries!.kubectl, [
           "--kubeconfig",
           user.kubeconfigPath,
           "auth",
@@ -488,8 +585,35 @@ if (!process.versions.bun) {
   describe("environment lifecycle", () => {
     // Upstream plane_test: "should be able to restart".
     it("can be restarted: stop() then start() on the same instance", async () => {
-      const env = new TestEnvironment({ version: process.env.ENVTEST_K8S_VERSION });
+      const restartCRD = {
+        apiVersion: "apiextensions.k8s.io/v1",
+        kind: "CustomResourceDefinition",
+        metadata: { name: "rounds.restart.example.com" },
+        spec: {
+          group: "restart.example.com",
+          names: { kind: "Round", listKind: "RoundList", plural: "rounds", singular: "round" },
+          scope: "Namespaced",
+          versions: [
+            {
+              name: "v1",
+              served: true,
+              storage: true,
+              schema: { openAPIV3Schema: { type: "object" } },
+            },
+          ],
+        },
+      };
+      // cleanUpAfterUse also runs in owned mode (upstream parity): stop()
+      // uninstalls against the live apiserver BEFORE tearing it down — if
+      // that ordering regressed, the delete calls would fail and stop()
+      // itself would reject, failing this test on both cycles.
+      const env = new TestEnvironment({
+        version: process.env.ENVTEST_K8S_VERSION,
+        crds: [restartCRD],
+        crdInstallOptions: { cleanUpAfterUse: true },
+      });
       const first = await env.start();
+      expect(first.installedCRDs).toEqual(["rounds.restart.example.com"]);
       await restRequestOk(first, "GET", "/version");
       await env.stop();
 

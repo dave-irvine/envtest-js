@@ -5,7 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { loadAll as parseYamlDocuments } from "js-yaml";
 
 import { hostPort } from "../controlplane/ports.js";
-import { createOrReplace, type RestConfig } from "./rest.js";
+import { createOrReplace, restRequest, type RestConfig } from "./rest.js";
 
 /**
  * Admission-webhook install — a port of envtest's WebhookInstallOptions
@@ -33,6 +33,14 @@ export interface WebhookInstallOptions {
   localServingHost?: string;
   /** Port for the in-test webhook server (default: a free port). */
   localServingPort?: number;
+  /**
+   * Delete the installed webhook configurations when the environment stops.
+   * An envtest-js extension (upstream always leaves them behind): with
+   * useExistingCluster, an abandoned configuration points at this dead test
+   * process, and a failurePolicy:Fail webhook then blocks matching requests
+   * on the shared cluster. Default false.
+   */
+  cleanUpAfterUse?: boolean;
 }
 
 export interface WebhookClientConfig {
@@ -170,6 +178,37 @@ export async function installWebhooks(
     await createOrReplace(config, `${API_BASE}/${KIND_TO_PLURAL[manifest.kind]}`, manifest);
   }
   return manifests.map((m) => m.metadata.name);
+}
+
+/** Kind + name of an installed webhook configuration — enough to delete it. */
+export interface WebhookConfigurationRef {
+  /** ValidatingWebhookConfiguration or MutatingWebhookConfiguration. */
+  kind: string;
+  name: string;
+}
+
+/**
+ * Delete webhook configurations, skipping ones that don't exist — the
+ * inverse of installWebhooks. Returns the names actually deleted.
+ */
+export async function uninstallWebhooks(
+  config: RestConfig,
+  refs: WebhookConfigurationRef[],
+): Promise<string[]> {
+  const deleted: string[] = [];
+  for (const ref of refs) {
+    const plural = KIND_TO_PLURAL[ref.kind];
+    if (!plural) throw new Error(`unsupported webhook configuration kind "${ref.kind}"`);
+    const res = await restRequest(config, "DELETE", `${API_BASE}/${plural}/${ref.name}`);
+    if (res.status === 404) continue;
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(
+        `failed to delete ${ref.kind} ${ref.name}: HTTP ${res.status}: ${res.json?.message ?? res.text.slice(0, 500)}`,
+      );
+    }
+    deleted.push(ref.name);
+  }
+  return deleted;
 }
 
 export interface WaitForWebhookServerOptions {

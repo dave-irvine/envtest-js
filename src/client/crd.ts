@@ -33,6 +33,14 @@ export interface InstallCRDsOptions {
    */
   pollIntervalMs?: number;
   /**
+   * Uninstall the CRDs that start() installed when the environment stops
+   * (upstream: CRDInstallOptions.CleanUpAfterUse). Honored by
+   * TestEnvironment.stop(); standalone installCRDs ignores it. Matters
+   * mostly with useExistingCluster, where a shared cluster otherwise
+   * accumulates test CRDs. Default false.
+   */
+  cleanUpAfterUse?: boolean;
+  /**
    * Local webhook serving details. When set, CRDs declaring
    * `spec.conversion.strategy: Webhook` get their conversion clientConfig
    * pointed at this address with the CA injected (upstream:
@@ -94,9 +102,22 @@ export async function uninstallCRDs(
     ...validateCRDManifests(opts.crds ?? []),
     ...(await readCRDManifests(paths, opts.errorIfPathMissing ?? true)),
   ];
+  return deleteCRDs(
+    config,
+    crds.map((crd) => crd.metadata.name),
+  );
+}
+
+/**
+ * Delete CRDs by name, skipping ones that don't exist (like upstream,
+ * IsNotFound is ignored). The manifest-free primitive under uninstallCRDs —
+ * pairs with config.installedCRDs when no manifests are at hand. Returns
+ * once the delete calls are accepted; the apiserver finishes removal
+ * asynchronously.
+ */
+export async function deleteCRDs(config: RestConfig, names: string[]): Promise<string[]> {
   const deleted: string[] = [];
-  for (const crd of crds) {
-    const name = crd.metadata.name;
+  for (const name of names) {
     const res = await restRequest(config, "DELETE", `${CRD_BASE}/${name}`);
     if (res.status === 404) continue;
     if (res.status < 200 || res.status >= 300) {

@@ -106,8 +106,14 @@ new TestEnvironment({
   attachOutput: true,           // pipe etcd/apiserver logs to stderr
   startTimeoutMs: 60_000,
   readyPollIntervalMs: 150,     // interval between etcd/apiserver readiness checks
+  useExistingCluster: true,     // attach to a pre-existing cluster instead of spawning one (below)
+  config: { server, caPem, certPem, keyPem }, // explicit credentials for useExistingCluster
 })
 ```
+
+### Attaching to an existing cluster
+
+Like upstream's `Environment.UseExistingCluster`, `useExistingCluster: true` (or the `USE_EXISTING_CLUSTER=true` environment variable, when the option is unset) skips etcd/kube-apiserver entirely and attaches to a cluster you already have. Credentials come from `config` when provided, otherwise from the kubeconfig at `KUBECONFIG` (first *readable* entry — missing files are skipped like kubectl, but kubectl-style merging is not done) or `~/.kube/config`; only client-certificate kubeconfigs are supported (what kind/k3d/minikube issue — token, exec-plugin, and basic auth are not). Scheme-less `server:` values are normalized to `https://` like kubectl; plain `http` is rejected. `config.user` is the client certificate's CN — the identity the apiserver actually sees — not the kubeconfig's arbitrary user-entry name. CRDs and webhook configurations still install on `start()`, and `stop()` leaves the cluster — including anything installed into it — running. **Careful with webhooks on shared clusters**: installed webhook configurations point back at the test process, so once it exits, a `failurePolicy: Fail` webhook blocks matching requests until you delete the configuration. To leave the cluster as you found it, opt into cleanup: `crdInstallOptions: { cleanUpAfterUse: true }` (upstream: `CRDInstallOptions.CleanUpAfterUse`) makes `stop()` uninstall the CRDs `start()` installed, and `webhookInstallOptions.cleanUpAfterUse` (an envtest-js extension — upstream always leaves webhook configurations behind) does the same for webhook configurations; both run before teardown, while the apiserver is still reachable. `config.binaries`/`config.etcdURL` are absent in this mode, and `addUser()` is unavailable (the environment doesn't own the cluster's CA). The parsing helpers are exported too: `parseKubeconfig(yaml)` / `loadKubeconfig({ path?, context? })`.
 
 Recommended test-runner pattern (same as upstream): **one control plane per suite**, not per test. Glue for the two main runners ships with the package:
 

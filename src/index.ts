@@ -9,6 +9,7 @@ export type {
 
 export {
   installWebhooks,
+  uninstallWebhooks,
   readWebhookManifests,
   rewriteWebhookManifests,
   rewriteConversionWebhooks,
@@ -17,11 +18,12 @@ export {
 export type {
   WebhookInstallOptions,
   WebhookConfigurationManifest,
+  WebhookConfigurationRef,
   WebhookClientConfig,
   CRDConversionTarget,
 } from "./client/webhook.js";
 
-export { installCRDs, uninstallCRDs } from "./client/crd.js";
+export { installCRDs, uninstallCRDs, deleteCRDs } from "./client/crd.js";
 export type { CRDManifest, InstallCRDsOptions } from "./client/crd.js";
 
 export { restRequest, restRequestOk } from "./client/rest.js";
@@ -33,11 +35,17 @@ export type { BinaryPaths, ResolveBinariesOptions } from "./setup/assets.js";
 export { listCachedVersions, cleanupCachedVersions } from "./setup/store.js";
 export type { CachedVersion, CacheFilter } from "./setup/store.js";
 
-export { TinyCA, generateServiceAccountKeys } from "./controlplane/pki.js";
+export { TinyCA, generateServiceAccountKeys, certificateCommonName } from "./controlplane/pki.js";
 export type { CertKeyPair, ServiceAccountKeys } from "./controlplane/pki.js";
 
-export { buildKubeconfig } from "./client/kubeconfig.js";
-export type { KubeconfigInput } from "./client/kubeconfig.js";
+export { buildKubeconfig, parseKubeconfig, loadKubeconfig } from "./client/kubeconfig.js";
+export type {
+  KubeconfigInput,
+  ParsedKubeconfig,
+  ParseKubeconfigOptions,
+  LoadKubeconfigOptions,
+  LoadedKubeconfig,
+} from "./client/kubeconfig.js";
 
 export {
   fetchReleaseIndex,
