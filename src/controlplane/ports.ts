@@ -31,6 +31,9 @@ export function isBindFailure(err: unknown): boolean {
  * Any other failure propagates immediately.
  */
 export async function retryOnBindFailure(fn: () => Promise<void>, attempts = 3): Promise<void> {
+  if (!Number.isFinite(attempts) || attempts < 1) {
+    throw new Error(`attempts must be a positive finite number, got ${attempts}`);
+  }
   for (let attempt = 1; ; attempt++) {
     try {
       return await fn();
