@@ -16,6 +16,7 @@ import {
   restRequest,
   restRequestOk,
   TestEnvironment,
+  uninstallCRDs,
   waitForWebhookServer,
   type EnvtestConfig,
 } from "../src/index.js";
@@ -134,6 +135,34 @@ describe("e2e: real control plane", () => {
       "crontabs.stable.example.com",
       "widgets.conversion.example.com",
     ]);
+  });
+
+  // Upstream: "should uninstall the CRDs from the cluster". Uses its own
+  // fixture (in a subdirectory, invisible to directory-based installs of
+  // fixtures/) so shared CRDs other tests rely on stay untouched.
+  it("uninstalls CRDs from the cluster", async () => {
+    const gadgetCRD = path.join(FIXTURES, "uninstall", "gadget-crd.yaml");
+    const installed = await installCRDs(config, [gadgetCRD]);
+    expect(installed).toEqual(["gadgets.uninstall.example.com"]);
+
+    const deleted = await uninstallCRDs(config, [gadgetCRD]);
+    expect(deleted).toEqual(["gadgets.uninstall.example.com"]);
+
+    // Deletion is asynchronous: poll until the CRD is gone, as upstream's
+    // test does with Eventually.
+    const crdPath =
+      "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/gadgets.uninstall.example.com";
+    const deadline = Date.now() + 10_000;
+    let status;
+    do {
+      status = (await restRequest(config, "GET", crdPath)).status;
+      if (status !== 404) await new Promise((r) => setTimeout(r, 100));
+    } while (status !== 404 && Date.now() < deadline);
+    expect(status).toBe(404);
+
+    // Uninstalling already-absent CRDs is a no-op, like upstream
+    // (IsNotFound errors are ignored).
+    expect(await uninstallCRDs(config, [gadgetCRD])).toEqual([]);
   });
 
   it("writes a kubeconfig that the real kubectl accepts", async () => {

@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { APIServer, type APIServerCertFiles } from "./controlplane/apiserver.js";
 import { resolveBinaries, type BinaryPaths, type ResolveBinariesOptions } from "./setup/assets.js";
-import { installCRDs, type InstallCRDsOptions } from "./client/crd.js";
+import { installCRDs, uninstallCRDs, type InstallCRDsOptions } from "./client/crd.js";
 import { Etcd } from "./controlplane/etcd.js";
 import { buildKubeconfig } from "./client/kubeconfig.js";
 import { generateServiceAccountKeys, TinyCA } from "./controlplane/pki.js";
@@ -324,6 +324,11 @@ export class TestEnvironment {
       conversionWebhook:
         opts?.conversionWebhook ?? this.conversionWebhookFor(this.config.webhook),
     });
+  }
+
+  /** Delete the CRDs named by the given manifests from the running environment. */
+  async uninstallCRDs(paths: string[]): Promise<string[]> {
+    return uninstallCRDs(this.config, paths);
   }
 
   /**

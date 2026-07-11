@@ -49,6 +49,32 @@ export async function installCRDs(
   return crds.map((c) => c.metadata.name);
 }
 
+/**
+ * Delete the CustomResourceDefinitions named by the given YAML/JSON manifests
+ * (files or directories of files), mirroring envtest.UninstallCRDs. CRDs that
+ * don't exist are skipped. Like upstream, this returns once the delete calls
+ * are accepted — the apiserver finishes removal (and drops the served API
+ * groups) asynchronously.
+ *
+ * Returns the names of the CRDs deleted (not-found ones excluded).
+ */
+export async function uninstallCRDs(config: RestConfig, paths: string[]): Promise<string[]> {
+  const crds = await readCRDManifests(paths);
+  const deleted: string[] = [];
+  for (const crd of crds) {
+    const name = crd.metadata.name;
+    const res = await restRequest(config, "DELETE", `${CRD_BASE}/${name}`);
+    if (res.status === 404) continue;
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(
+        `failed to delete CRD ${name}: HTTP ${res.status}: ${res.json?.message ?? res.text.slice(0, 500)}`,
+      );
+    }
+    deleted.push(name);
+  }
+  return deleted;
+}
+
 interface CRDManifest {
   apiVersion: string;
   kind: string;

@@ -15,7 +15,7 @@ export type {
   CRDConversionTarget,
 } from "./client/webhook.js";
 
-export { installCRDs } from "./client/crd.js";
+export { installCRDs, uninstallCRDs } from "./client/crd.js";
 export type { InstallCRDsOptions } from "./client/crd.js";
 
 export { restRequest, restRequestOk } from "./client/rest.js";
