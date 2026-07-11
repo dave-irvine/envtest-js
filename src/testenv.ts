@@ -376,7 +376,9 @@ export class TestEnvironment {
     if (!user.name) throw new Error("user name is required");
     if (!this.ca || !this.workDir) throw new Error("TestEnvironment not started");
 
-    const groups = user.groups ?? [];
+    // Copy, not adopt: the same array goes into the cert's O= values and the
+    // returned object — later caller mutation must affect neither.
+    const groups = [...(user.groups ?? [])];
     const { certPem, keyPem } = await this.ca.newClientCert(user.name, groups);
     const kubeconfigYaml = buildKubeconfig({
       server: config.server,
