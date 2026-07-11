@@ -1,6 +1,6 @@
 # envtest-js
 
-[![npm](https://img.shields.io/npm/v/%40pixelbitsltd%2Fenvtest-js)](https://www.npmjs.com/package/@pixelbitsltd/envtest-js)
+[![npm](https://img.shields.io/npm/v/%40pixelbitsltd%2Fenvtest-js)](https://www.npmjs.com/package/@pixelbitsltd/envtest-js) [![npm provenance](https://img.shields.io/badge/npm-provenance-brightgreen?logo=npm)](https://www.npmjs.com/package/@pixelbitsltd/envtest-js#provenance)
 
 Run a **real Kubernetes API server** (`kube-apiserver` + `etcd`) for integration tests, from Node or Bun — a pure-TypeScript port of controller-runtime's [envtest](https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/envtest).
 
