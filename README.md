@@ -1,5 +1,7 @@
 # envtest-js
 
+[![Latest release](https://img.shields.io/github/v/release/pixelbitsltd/envtest-js)](https://github.com/pixelbitsltd/envtest-js/releases) — not yet published to npm.
+
 Run a **real Kubernetes API server** (`kube-apiserver` + `etcd`) for integration tests, from Node or Bun — a pure-TypeScript port of controller-runtime's [envtest](https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/envtest).
 
 No Docker, no cluster, no Go toolchain. Startup is ~2–5 seconds once binaries are cached.
