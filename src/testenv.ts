@@ -223,6 +223,9 @@ export class TestEnvironment {
 
     this.workDir = await fsp.mkdtemp(path.join(os.tmpdir(), "envtest-"));
 
+    // Visible to the catch below: cluster credentials once resolved, so a
+    // partway failure can roll back cleanUpAfterUse-tracked installs.
+    let cleanupConfig: RestConfig | undefined;
     try {
       // --- webhook prep (cert, port, manifest rewrite) ---
       // Like upstream's PrepWithoutInstalling: a *separate* throwaway CA
@@ -281,18 +284,22 @@ export class TestEnvironment {
       } else {
         ({ restConfig, user, binaries } = await this.startControlPlane());
       }
+      cleanupConfig = restConfig;
 
       // --- webhooks (before CRDs, as upstream does) ---
       let webhook: WebhookServing | undefined;
       if (webhookPrep) {
-        webhookPrep.serving.configurationNames = await installWebhooks(
-          restConfig,
-          webhookPrep.manifests,
-        );
+        // Recorded BEFORE installing: a failure partway through the install
+        // may have landed some configurations, and rollback's deletes are
+        // 404-tolerant, so over-recording is safe.
         this.installedWebhooks = webhookPrep.manifests.map((m) => ({
           kind: m.kind,
           name: m.metadata.name,
         }));
+        webhookPrep.serving.configurationNames = await installWebhooks(
+          restConfig,
+          webhookPrep.manifests,
+        );
         webhook = webhookPrep.serving;
       }
 
@@ -336,8 +343,34 @@ export class TestEnvironment {
       };
       return this._config;
     } catch (err) {
+      await this.rollbackInstalls(cleanupConfig);
       await this.stop().catch(() => {});
       throw err;
+    }
+  }
+
+  /**
+   * start() failed after cluster credentials were resolved: stop()'s
+   * cleanUpAfterUse pass won't run (config was never set), so remove
+   * whatever the aborted start() may already have installed — this matters
+   * for attach mode, where the cluster outlives the failure. Best-effort
+   * (the original startup error is the one worth surfacing), and deletes
+   * are 404-tolerant, so intended-but-never-created objects are fine.
+   */
+  private async rollbackInstalls(restConfig: RestConfig | undefined): Promise<void> {
+    if (!restConfig) return;
+    const opts = this.options;
+    if (opts.webhookInstallOptions?.cleanUpAfterUse && this.installedWebhooks.length) {
+      await uninstallWebhooks(restConfig, this.installedWebhooks).catch(() => {});
+    }
+    if (opts.crdInstallOptions?.cleanUpAfterUse) {
+      const crds = [...(opts.crds ?? []), ...(opts.crdInstallOptions.crds ?? [])];
+      if (opts.crdDirectoryPaths?.length || crds.length) {
+        await uninstallCRDs(restConfig, opts.crdDirectoryPaths ?? [], {
+          crds,
+          errorIfPathMissing: false,
+        }).catch(() => {});
+      }
     }
   }
 
@@ -448,6 +481,17 @@ export class TestEnvironment {
     let restConfig: RestConfig;
     let source: string;
     if (provided) {
+      // Fail fast on incomplete credentials (matching the kubeconfig
+      // path's strictness): an empty CA or key would otherwise surface
+      // much later as an opaque TLS handshake error.
+      for (const field of ["caPem", "certPem", "keyPem"] as const) {
+        const value = provided[field];
+        if (typeof value !== "string" || !value.trim()) {
+          throw new Error(
+            `useExistingCluster: options.config.${field} is empty — attaching requires full mTLS credentials`,
+          );
+        }
+      }
       // Copy, not adopt: later caller mutation must not affect the running
       // environment.
       restConfig = {

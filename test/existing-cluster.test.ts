@@ -93,6 +93,18 @@ describe("useExistingCluster (offline)", () => {
     await expect(httpEnv.start()).rejects.toThrow("must be an https URL");
   });
 
+  it("rejects incomplete explicit credentials fast", async () => {
+    // An empty CA/cert/key would otherwise fail much later as an opaque
+    // TLS handshake error — attach requires full mTLS credentials.
+    for (const field of ["caPem", "certPem", "keyPem"] as const) {
+      const env = new TestEnvironment({
+        useExistingCluster: true,
+        config: { ...restConfig, [field]: "" },
+      });
+      await expect(env.start()).rejects.toThrow(`options.config.${field} is empty`);
+    }
+  });
+
   it("discovers credentials from the kubeconfig at KUBECONFIG", async () => {
     const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "envtest-attach-"));
     try {

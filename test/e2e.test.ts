@@ -351,6 +351,29 @@ describe("e2e: real control plane", () => {
     expect(await waitForGone(config, webhookPath)).toBe(404);
   });
 
+  // stop()'s cleanUpAfterUse pass is driven by the started config, which a
+  // failed start() never produces — rollback must cover that window, or a
+  // partial start leaks webhook configurations into the shared cluster.
+  it("rolls back cleanUpAfterUse installs when start() fails partway", async () => {
+    const webhookPath =
+      "/apis/admissionregistration.k8s.io/v1/validatingwebhookconfigurations/envtest-attach-cleanup";
+    const env = new TestEnvironment({
+      useExistingCluster: true,
+      // Webhooks install first (as upstream orders it), then the CRD read
+      // fails: without rollback the configuration would be orphaned.
+      crdDirectoryPaths: [path.join(FIXTURES, "attach", "does-not-exist.yaml")],
+      crdInstallOptions: { cleanUpAfterUse: true },
+      webhookInstallOptions: {
+        paths: [path.join(FIXTURES, "attach", "cleanup-webhook.yaml")],
+        cleanUpAfterUse: true,
+      },
+    });
+    await withEnv({ KUBECONFIG: config.kubeconfigPath }, () =>
+      expect(env.start()).rejects.toThrow(/does-not-exist/),
+    );
+    expect(await waitForGone(config, webhookPath)).toBe(404);
+  });
+
   // Node-only: this validates the official client against our kubeconfig;
   // client-node's own Bun support is its project's contract, not ours.
   // Lazily imported so Bun never loads the module at all.
