@@ -1,13 +1,17 @@
 # envtest-js
 
-[![Latest release](https://img.shields.io/github/v/release/pixelbitsltd/envtest-js)](https://github.com/pixelbitsltd/envtest-js/releases) — not yet published to npm.
+[![npm](https://img.shields.io/npm/v/%40pixelbitsltd%2Fenvtest-js)](https://www.npmjs.com/package/@pixelbitsltd/envtest-js)
 
 Run a **real Kubernetes API server** (`kube-apiserver` + `etcd`) for integration tests, from Node or Bun — a pure-TypeScript port of controller-runtime's [envtest](https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/envtest).
 
 No Docker, no cluster, no Go toolchain. Startup is ~2–5 seconds once binaries are cached.
 
+```sh
+npm install --save-dev @pixelbitsltd/envtest-js   # or: bun add -d @pixelbitsltd/envtest-js
+```
+
 ```ts
-import { TestEnvironment, restRequestOk } from "envtest-js";
+import { TestEnvironment, restRequestOk } from "@pixelbitsltd/envtest-js";
 
 const env = new TestEnvironment({
   crdDirectoryPaths: ["./config/crd"], // optional: files or directories

@@ -10,12 +10,12 @@ import type {} from "vitest";
  *
  * ```ts
  * // envtest.global.ts (registered as test.globalSetup in vitest config)
- * import { createVitestGlobalSetup } from "envtest-js/vitest";
+ * import { createVitestGlobalSetup } from "@pixelbitsltd/envtest-js/vitest";
  * export default createVitestGlobalSetup({ crdDirectoryPaths: ["./config/crd"] });
  *
  * // some.test.ts
  * import { inject } from "vitest";
- * import type {} from "envtest-js/vitest"; // types the "envtest" inject key
+ * import type {} from "@pixelbitsltd/envtest-js/vitest"; // types the "envtest" inject key
  * const config = inject("envtest");
  * ```
  *

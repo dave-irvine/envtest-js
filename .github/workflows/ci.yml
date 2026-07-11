@@ -116,10 +116,10 @@ jobs:
 
   # Cuts a release from main once the full CI gate is green: semantic-release
   # derives the version from conventional commits, bumps package.json /
-  # package-lock.json, commits that back ([skip ci]), tags, and publishes a
-  # GitHub Release. Deliberately NOT publishing to npm yet (npmPublish: false
-  # in .releaserc.json). The README shows the version via a release badge, so
-  # it needs no sync.
+  # package-lock.json, commits that back ([skip ci]), tags, publishes a
+  # GitHub Release, and publishes to npm via trusted publishing (OIDC — no
+  # npm token; the trusted publisher for @pixelbitsltd/envtest-js is
+  # configured on npmjs.com to trust this workflow file).
   release:
     name: Release
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -129,8 +129,11 @@ jobs:
     # No write permissions on GITHUB_TOKEN: semantic-release authenticates as
     # the release GitHub App instead, which is the ruleset bypass actor for
     # main (the default token can't push there — "changes through PR" rule).
+    # id-token lets npm mint an OIDC credential for trusted publishing (and
+    # provenance attestation comes with it).
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token

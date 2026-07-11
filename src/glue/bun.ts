@@ -7,11 +7,11 @@ import { TestEnvironment, type EnvtestConfig, type TestEnvironmentOptions } from
  * ```ts
  * // preload.ts
  * import { afterAll, beforeAll } from "bun:test";
- * import { registerEnvtest } from "envtest-js/bun";
+ * import { registerEnvtest } from "@pixelbitsltd/envtest-js/bun";
  * registerEnvtest({ beforeAll, afterAll }, { crdDirectoryPaths: ["./config/crd"] });
  *
  * // some.test.ts
- * import { envtestConfig } from "envtest-js/bun";
+ * import { envtestConfig } from "@pixelbitsltd/envtest-js/bun";
  * const config = envtestConfig();
  * ```
  *
