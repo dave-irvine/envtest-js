@@ -30,6 +30,9 @@ export type { RestConfig, RestResponse } from "./client/rest.js";
 export { resolveBinaries } from "./setup/assets.js";
 export type { BinaryPaths, ResolveBinariesOptions } from "./setup/assets.js";
 
+export { listCachedVersions, cleanupCachedVersions } from "./setup/store.js";
+export type { CachedVersion, CacheFilter } from "./setup/store.js";
+
 export { TinyCA, generateServiceAccountKeys } from "./controlplane/pki.js";
 export type { CertKeyPair, ServiceAccountKeys } from "./controlplane/pki.js";
 

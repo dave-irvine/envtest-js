@@ -74,10 +74,15 @@ export async function downloadArchive(
     }
 
     // Move into place; if a concurrent process won the race, keep theirs.
+    // A leftover partial install (crashed extraction) is removed and
+    // replaced, like upstream store.Add cleaning any existing item dir.
     try {
       await fsp.rename(binDir, destDir);
-    } catch (err) {
-      if (!(await hasAllBinaries(destDir))) throw err;
+    } catch {
+      if (!(await hasAllBinaries(destDir))) {
+        await fsp.rm(destDir, { recursive: true, force: true });
+        await fsp.rename(binDir, destDir);
+      }
     }
     log(`envtest binaries installed to ${destDir}`);
   } finally {

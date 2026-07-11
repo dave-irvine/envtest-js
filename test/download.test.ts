@@ -70,6 +70,17 @@ describe("downloadArchive", () => {
     expect(requestCount).toBe(before);
   });
 
+  it("replaces a partial existing install (upstream: cleans up any existing item directory)", async () => {
+    const destDir = path.join(workDir, "dest-partial");
+    await fsp.mkdir(destDir, { recursive: true });
+    await fsp.writeFile(path.join(destDir, binaryName("etcd")), "stale partial etcd\n");
+
+    await downloadArchive({ hash: goodHash, selfLink: `${baseURL}/envtest.tar.gz` }, destDir);
+    expect(await hasAllBinaries(destDir)).toBe(true);
+    const etcd = await fsp.readFile(path.join(destDir, binaryName("etcd")));
+    expect(etcd.subarray(0, 10).toString()).toContain("fake etcd");
+  });
+
   it("rejects a checksum mismatch and leaves nothing behind", async () => {
     const destDir = path.join(workDir, "dest-bad");
     const err = await downloadArchive(

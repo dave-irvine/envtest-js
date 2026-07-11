@@ -5,7 +5,6 @@
 Features upstream envtest implements and tests that envtest-js doesn't have yet:
 
 - [ ] `UseExistingCluster`: attach to a pre-existing cluster via kubeconfig instead of spawning a control plane (envtest_test.go Stop cleanup test exercises it).
-- [ ] Cache management à la `setup-envtest list`/`cleanup` (store_test.go): enumerate and remove cached binary versions.
 
 ## Later / nice-to-have
 
