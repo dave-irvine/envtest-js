@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { loadAll as parseYamlDocuments } from "js-yaml";
@@ -53,6 +54,11 @@ export async function installCRDs(
   paths: string[],
   opts: InstallCRDsOptions = {},
 ): Promise<string[]> {
+  const timeout = opts.establishTimeoutMs ?? 30_000;
+  const pollInterval = opts.pollIntervalMs ?? 100;
+  if (!Number.isFinite(pollInterval) || pollInterval <= 0) {
+    throw new Error(`pollIntervalMs must be a positive number, got ${pollInterval}`);
+  }
   let crds = [
     ...validateCRDManifests(opts.crds ?? []),
     ...(await readCRDManifests(paths, opts.errorIfPathMissing ?? true)),
@@ -64,8 +70,6 @@ export async function installCRDs(
   for (const crd of crds) {
     await createOrReplace(config, CRD_BASE, crd);
   }
-  const timeout = opts.establishTimeoutMs ?? 30_000;
-  const pollInterval = opts.pollIntervalMs ?? 100;
   for (const crd of crds) {
     await waitForEstablished(config, crd.metadata.name, timeout, pollInterval);
   }
@@ -138,7 +142,7 @@ async function readCRDManifests(
 ): Promise<CRDManifest[]> {
   const files: string[] = [];
   for (const p of paths) {
-    let stat;
+    let stat: Stats;
     try {
       stat = await fsp.stat(p);
     } catch (err) {

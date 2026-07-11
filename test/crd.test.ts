@@ -52,3 +52,16 @@ describe("errorIfPathMissing", () => {
     expect(await uninstallCRDs(config, [MISSING], { errorIfPathMissing: false })).toEqual([]);
   });
 });
+
+describe("pollIntervalMs validation", () => {
+  // Rejected up front, before any manifests are read or REST calls made — a
+  // zero/negative interval would otherwise poll as fast as the event loop
+  // allows.
+  for (const bad of [0, -100, NaN, Infinity]) {
+    it(`installCRDs rejects pollIntervalMs = ${bad}`, async () => {
+      expect(await rejectionOf(installCRDs(config, [], { pollIntervalMs: bad }))).toMatch(
+        /pollIntervalMs must be a positive number/,
+      );
+    });
+  }
+});
