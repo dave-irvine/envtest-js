@@ -105,6 +105,7 @@ new TestEnvironment({
   securePort: 6443,             // fixed apiserver port; default: an OS-assigned free port
   attachOutput: true,           // pipe etcd/apiserver logs to stderr
   startTimeoutMs: 60_000,
+  readyPollIntervalMs: 150,     // interval between etcd/apiserver readiness checks
 })
 ```
 

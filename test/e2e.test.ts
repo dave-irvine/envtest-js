@@ -3,14 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import {
-  afterAll,
-  beforeAll,
-  describe,
-  expect,
-  getEnvtestConfig,
-  it,
-} from "./helpers/runner.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { getEnvtestConfig } from "./helpers/envtest.js";
 import {
   installCRDs,
   restRequest,

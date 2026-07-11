@@ -1,5 +1,5 @@
 import { createPrivateKey, createPublicKey, X509Certificate } from "node:crypto";
-import { describe, expect, it } from "./helpers/runner.js";
+import { describe, expect, it } from "vitest";
 
 import { TinyCA, generateServiceAccountKeys } from "../src/controlplane/pki.js";
 
@@ -84,6 +84,43 @@ describe("TinyCA", () => {
       expect(windowMs).toBeGreaterThan(24 * 60 * 60 * 1000); // > 1 day
       expect(windowMs).toBeLessThan(14 * 24 * 60 * 60 * 1000); // < 2 weeks
     }
+  });
+
+  // Upstream tinyca_test: DNS serving names are resolved and their addresses
+  // added as IP SANs alongside the DNS SAN.
+  it("resolves DNS serving names and adds their IPs as IP SANs", async () => {
+    const ca = await TinyCA.create();
+    const cert = new X509Certificate((await ca.newServingCert("localhost")).certPem);
+    expect(cert.subjectAltName).toContain("DNS:localhost");
+    // localhost resolves via the hosts file everywhere, to 127.0.0.1 and/or ::1.
+    expect(cert.subjectAltName).toMatch(/IP Address:(127\.0\.0\.1|::1)/);
+  });
+
+  // Divergence from upstream (which fails hard on resolution errors): the
+  // default apiserver SAN set includes in-cluster names that never resolve
+  // on the host, so unresolvable names stay DNS-only.
+  it("keeps unresolvable DNS names as DNS SANs without failing", async () => {
+    const ca = await TinyCA.create();
+    const serving = await ca.newServingCert("kubernetes.default.svc.cluster.local", "127.0.0.1");
+    const cert = new X509Certificate(serving.certPem);
+    expect(cert.subjectAltName).toContain("DNS:kubernetes.default.svc.cluster.local");
+    expect(cert.subjectAltName).toContain("IP Address:127.0.0.1");
+  });
+
+  it("does not duplicate SANs when a name and its address are both given", async () => {
+    const ca = await TinyCA.create();
+    const serving = await ca.newServingCert("localhost", "127.0.0.1", "::1", "127.0.0.1");
+    const entries = new X509Certificate(serving.certPem).subjectAltName!.split(", ");
+    expect(new Set(entries).size).toBe(entries.length);
+  });
+
+  // Upstream tinyca_test: "should ignore empty names".
+  it("skips empty serving-cert names", async () => {
+    const ca = await TinyCA.create();
+    const serving = await ca.newServingCert("", "localhost");
+    const cert = new X509Certificate(serving.certPem);
+    expect(cert.subject).toContain("CN=localhost");
+    expect(cert.subjectAltName!.split(", ")).not.toContain("DNS:");
   });
 
   // Upstream tinyca_test: "should assume a name of localhost if no names are given".

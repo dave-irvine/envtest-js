@@ -1,4 +1,4 @@
-import { describe, expect, it } from "./helpers/runner.js";
+import { describe, expect, it } from "vitest";
 
 import { connectHostFor, getFreePort, hostPort } from "../src/controlplane/ports.js";
 

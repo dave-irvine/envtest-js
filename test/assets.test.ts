@@ -3,7 +3,7 @@
 // These paths resolve without any network access.
 import path from "node:path";
 
-import { afterAll, beforeAll, describe, expect, it } from "./helpers/runner.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resolveBinaries } from "../src/setup/assets.js";
 import { binaryName } from "../src/setup/platform.js";
 

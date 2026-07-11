@@ -30,6 +30,8 @@ export interface APIServerOptions {
   /** Fixed secure port (upstream SecurePort). Default: an OS-assigned free port. */
   securePort?: number;
   extraArgs?: ExtraArgs;
+  /** Interval between readiness checks (default 150ms). */
+  readyPollIntervalMs?: number;
   startTimeoutMs?: number;
   stopTimeoutMs?: number;
   attachOutput?: boolean;
@@ -86,6 +88,7 @@ export class APIServer {
         const res = await restRequest(restConfig, "GET", "/readyz");
         return res.status === 200;
       },
+      readyPollIntervalMs: this.opts.readyPollIntervalMs,
       startTimeoutMs: this.opts.startTimeoutMs,
       stopTimeoutMs: this.opts.stopTimeoutMs,
       attachOutput: this.opts.attachOutput,

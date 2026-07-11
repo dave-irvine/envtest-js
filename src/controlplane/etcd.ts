@@ -7,6 +7,8 @@ export interface EtcdOptions {
   dataDir: string;
   /** Extra/overriding etcd flags. A null value removes a default flag. */
   extraArgs?: ExtraArgs;
+  /** Interval between readiness checks (default 150ms). */
+  readyPollIntervalMs?: number;
   startTimeoutMs?: number;
   stopTimeoutMs?: number;
   attachOutput?: boolean;
@@ -44,6 +46,7 @@ export class Etcd {
       command: this.opts.binary,
       args: renderArgs(mergeArgs(defaults, this.opts.extraArgs)),
       readyCheck: () => this.isHealthy(),
+      readyPollIntervalMs: this.opts.readyPollIntervalMs,
       startTimeoutMs: this.opts.startTimeoutMs,
       stopTimeoutMs: this.opts.stopTimeoutMs,
       attachOutput: this.opts.attachOutput,

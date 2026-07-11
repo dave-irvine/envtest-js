@@ -1,6 +1,7 @@
 [test]
-# The same test files run under vitest (Node) and bun:test (Bun) via the
-# runner shim in test/helpers/runner.ts. The preload boots one shared
-# control plane per run — the bun equivalent of test/e2e-global-setup.ts.
+# The same test files run under vitest (Node) and bun:test (Bun): they
+# import from "vitest", which `bun test` remaps to bun:test. The preload
+# boots one shared control plane per run — the bun equivalent of
+# test/e2e-global-setup.ts.
 root = "test"
 preload = ["./test/bun-preload.ts"]

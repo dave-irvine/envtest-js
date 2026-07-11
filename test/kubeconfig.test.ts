@@ -1,5 +1,5 @@
 import { load as parseYaml } from "js-yaml";
-import { describe, expect, it } from "./helpers/runner.js";
+import { describe, expect, it } from "vitest";
 
 
 import { buildKubeconfig } from "../src/client/kubeconfig.js";

@@ -2,6 +2,7 @@
 // needs the reflect-metadata polyfill loaded first (v1 bundled it).
 import "reflect-metadata";
 import { generateKeyPair, randomBytes, webcrypto } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { promisify } from "node:util";
 import * as x509 from "@peculiar/x509";
@@ -128,13 +129,30 @@ export class TinyCA {
 
   /**
    * Mint a TLS serving certificate. Names may be DNS names or IP addresses;
-   * they land in the SAN extension. Defaults to localhost + loopback.
+   * they land in the SAN extension. Empty names are skipped, and DNS names
+   * are additionally resolved so their addresses become IP SANs, both as
+   * upstream's tinyca does — except that upstream fails on resolution errors
+   * while we skip them, because our default apiserver SAN set includes
+   * in-cluster names (kubernetes.default.svc, ...) that never resolve on the
+   * host. Defaults to localhost + loopback.
    */
   async newServingCert(...names: string[]): Promise<CertKeyPair> {
+    names = names.filter((n) => n !== "");
     if (names.length === 0) names = ["localhost", "127.0.0.1", "::1"];
-    const sans = names.map(
-      (n) => new x509.GeneralName(isIP(n) ? "ip" : "dns", n),
+    const dnsNames = [...new Set(names.filter((n) => !isIP(n)))];
+    const resolved = await Promise.all(
+      dnsNames.map((n) =>
+        lookup(n, { all: true }).then(
+          (addrs) => addrs.map((a) => a.address),
+          () => [],
+        ),
+      ),
     );
+    const ips = [...new Set([...names.filter((n) => isIP(n)), ...resolved.flat()])];
+    const sans = [
+      ...dnsNames.map((n) => new x509.GeneralName("dns", n)),
+      ...ips.map((ip) => new x509.GeneralName("ip", ip)),
+    ];
     return this.issue(new x509.Name(`CN=${names[0]}`), [
       new x509.ExtendedKeyUsageExtension([x509.ExtendedKeyUsage.serverAuth], false),
       new x509.SubjectAlternativeNameExtension(sans, false),

@@ -65,6 +65,11 @@ export interface TestEnvironmentOptions extends ResolveBinariesOptions {
   apiServerFlags?: ExtraArgs;
   /** Extra/overriding etcd flags; null removes a default. */
   etcdFlags?: ExtraArgs;
+  /**
+   * Interval between etcd/apiserver readiness checks while starting
+   * (upstream: HealthCheck.PollInterval). Default 150ms.
+   */
+  readyPollIntervalMs?: number;
   /** Per-process readiness timeout (default 60s). */
   startTimeoutMs?: number;
   /** Graceful-shutdown timeout before SIGKILL (default 10s). */
@@ -233,6 +238,7 @@ export class TestEnvironment {
         binary: binaries.etcd,
         dataDir: etcdDataDir,
         extraArgs: opts.etcdFlags,
+        readyPollIntervalMs: opts.readyPollIntervalMs,
         startTimeoutMs: opts.startTimeoutMs,
         stopTimeoutMs: opts.stopTimeoutMs,
         attachOutput: opts.attachOutput,
@@ -254,6 +260,7 @@ export class TestEnvironment {
           keyPem: admin.keyPem,
         }),
         extraArgs: opts.apiServerFlags,
+        readyPollIntervalMs: opts.readyPollIntervalMs,
         startTimeoutMs: opts.startTimeoutMs,
         stopTimeoutMs: opts.stopTimeoutMs,
         attachOutput: opts.attachOutput,

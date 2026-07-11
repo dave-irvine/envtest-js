@@ -1,6 +1,6 @@
 // Intentions from upstream process_test.go (Start/Stop method behaviors),
 // using process.execPath -e children so the suite runs under Node and Bun.
-import { describe, expect, it } from "./helpers/runner.js";
+import { describe, expect, it } from "vitest";
 
 import { ManagedProcess } from "../src/controlplane/process.js";
 
@@ -11,13 +11,16 @@ function managed(args: {
   command?: string;
   script?: string;
   ready?: boolean;
+  readyCheck?: () => Promise<boolean>;
+  readyPollIntervalMs?: number;
   startTimeoutMs?: number;
 }): ManagedProcess {
   return new ManagedProcess({
     name: "fake-control-plane",
     command: args.command ?? NODE,
     args: args.script === undefined ? [] : ["-e", args.script],
-    readyCheck: async () => args.ready ?? false,
+    readyCheck: args.readyCheck ?? (async () => args.ready ?? false),
+    readyPollIntervalMs: args.readyPollIntervalMs,
     startTimeoutMs: args.startTimeoutMs ?? 1_000,
     stopTimeoutMs: 2_000,
   });
@@ -78,6 +81,51 @@ describe("ManagedProcess.start", () => {
     expect(proc.capturedOutput).toContain("to stdout");
     expect(proc.capturedOutput).toContain("to stderr");
     await proc.stop();
+  });
+});
+
+// Upstream process_test.go exercises both the default poll interval and a
+// configured one ("if a health check poll interval is specified, uses it").
+describe("ManagedProcess readiness polling", () => {
+  it("polls at the configured interval", async () => {
+    let checks = 0;
+    const proc = managed({
+      script: HANG,
+      readyCheck: async () => ++checks >= 3,
+      readyPollIntervalMs: 200,
+      startTimeoutMs: 5_000,
+    });
+    const started = Date.now();
+    await proc.start();
+    expect(checks).toBe(3);
+    // Two sleeps separate the three checks; allow a little timer jitter.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(380);
+    await proc.stop();
+  });
+
+  it("polls at the default 150ms interval when unset", async () => {
+    let checks = 0;
+    const proc = managed({
+      script: HANG,
+      readyCheck: async () => {
+        checks++;
+        return false;
+      },
+      startTimeoutMs: 500,
+    });
+    await proc.start().catch(() => {});
+    // ~1 + 500/150 checks; the bounds prove it neither busy-loops nor stalls.
+    expect(checks).toBeGreaterThanOrEqual(2);
+    expect(checks).toBeLessThanOrEqual(6);
+  });
+
+  it("rejects a non-positive poll interval", () => {
+    expect(() => managed({ script: HANG, readyPollIntervalMs: 0 })).toThrow(
+      /readyPollIntervalMs must be a positive number/,
+    );
+    expect(() => managed({ script: HANG, readyPollIntervalMs: -1 })).toThrow(
+      /readyPollIntervalMs must be a positive number/,
+    );
   });
 });
 

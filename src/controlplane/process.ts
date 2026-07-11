@@ -34,6 +34,11 @@ export interface ManagedProcessOptions {
   env?: NodeJS.ProcessEnv;
   /** Returns true once the process is serving. Errors are treated as "not ready yet". */
   readyCheck: () => Promise<boolean>;
+  /**
+   * Interval between ready checks (upstream: HealthCheck.PollInterval).
+   * Default 150ms.
+   */
+  readyPollIntervalMs?: number;
   startTimeoutMs?: number;
   stopTimeoutMs?: number;
   /** Pipe child stdout/stderr through to the parent (for debugging). */
@@ -54,7 +59,12 @@ export class ManagedProcess {
   private hasExited = false;
   private settled: Promise<{ exitCode?: number; signal?: string; shortMessage?: string }> | undefined;
 
-  constructor(private readonly opts: ManagedProcessOptions) {}
+  constructor(private readonly opts: ManagedProcessOptions) {
+    const interval = opts.readyPollIntervalMs ?? 150;
+    if (!Number.isFinite(interval) || interval <= 0) {
+      throw new Error(`readyPollIntervalMs must be a positive number, got ${interval}`);
+    }
+  }
 
   get pid(): number | undefined {
     return this.subprocess?.pid;
@@ -111,7 +121,7 @@ export class ManagedProcess {
           `${this.opts.name} did not become ready within ${timeoutMs}ms. Output:\n${this.output}`,
         );
       }
-      await sleep(150);
+      await sleep(this.opts.readyPollIntervalMs ?? 150);
     }
   }
 

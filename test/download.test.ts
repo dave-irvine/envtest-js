@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import * as tar from "tar";
 
-import { afterAll, beforeAll, describe, expect, it } from "./helpers/runner.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { downloadArchive, hasAllBinaries } from "../src/setup/download.js";
 import { binaryName } from "../src/setup/platform.js";
 
