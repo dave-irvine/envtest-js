@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Keeps the SHA-pinned action refs in ci.yml fresh (updates the pin and
+  # the version comment together) — required upkeep for the org policy that
+  # actions must be pinned to full-length commit SHAs.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # Batch related bumps into single PRs to keep the noise down; CI's full
+    # matrix (Node + Bun, e2e) vets every update PR anyway.
+    groups:
+      dev-dependencies:
+        dependency-type: development
+      production-dependencies:
+        dependency-type: production

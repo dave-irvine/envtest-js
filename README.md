@@ -103,6 +103,10 @@ new TestEnvironment({
 
 Recommended test-runner pattern (same as upstream): **one control plane per suite**, not per test. Glue for the two main runners ships with the package:
 
+## Security posture
+
+Everything client-facing is verified mTLS: the apiserver serves only HTTPS with a throwaway CA, clients authenticate with certs (no tokens, no `insecure-skip-tls-verify`), webhook callbacks are verified via the injected `caBundle`, and `waitForWebhookServer` verifies the serving cert rather than dial-checking blindly. Private keys and the kubeconfig are written `0600` inside a `0700` temp dir. Two deliberate limits, both inherited from upstream envtest: **etcd listens in plaintext without authentication on loopback** (only the co-located apiserver is meant to talk to it, but any local process *could* — don't run envtest on hosts with untrusted local users), and the apiserver's default `anonymous-auth` stays enabled (RBAC denies anonymous everything beyond health/version discovery, and the health endpoints need it).
+
 ## Runtime support
 
 Node ≥ 24 and Bun.

@@ -159,14 +159,17 @@ export class TestEnvironment {
         saPublicKey: path.join(certDir, "sa-signer.pub"),
         saPrivateKey: path.join(certDir, "sa-signer.key"),
       };
+      // Private keys are owner-only; certificates are public material.
+      // (The mkdtemp workdir is already 0700 on POSIX — defense in depth.)
+      const PRIVATE = { mode: 0o600 } as const;
       await Promise.all([
         fsp.writeFile(certFiles.caCert, ca.certificatePem),
         fsp.writeFile(certFiles.servingCert, serving.certPem),
-        fsp.writeFile(certFiles.servingKey, serving.keyPem),
+        fsp.writeFile(certFiles.servingKey, serving.keyPem, PRIVATE),
         fsp.writeFile(certFiles.saPublicKey, saKeys.publicKeyPem),
-        fsp.writeFile(certFiles.saPrivateKey, saKeys.privateKeyPem),
+        fsp.writeFile(certFiles.saPrivateKey, saKeys.privateKeyPem, PRIVATE),
         fsp.writeFile(path.join(certDir, "admin.crt"), admin.certPem),
-        fsp.writeFile(path.join(certDir, "admin.key"), admin.keyPem),
+        fsp.writeFile(path.join(certDir, "admin.key"), admin.keyPem, PRIVATE),
       ]);
 
       // --- webhook prep (cert, port, manifest rewrite) ---
@@ -190,7 +193,7 @@ export class TestEnvironment {
         const keyPath = path.join(webhookCertDir, "tls.key");
         await Promise.all([
           fsp.writeFile(certPath, serving.certPem),
-          fsp.writeFile(keyPath, serving.keyPem),
+          fsp.writeFile(keyPath, serving.keyPem, { mode: 0o600 }),
         ]);
 
         const manifests = rewriteWebhookManifests(
@@ -273,7 +276,8 @@ export class TestEnvironment {
         userName: ADMIN_USER,
       });
       const kubeconfigPath = path.join(this.workDir, "kubeconfig");
-      await fsp.writeFile(kubeconfigPath, kubeconfigYaml);
+      // The kubeconfig inlines the admin client key: owner-only.
+      await fsp.writeFile(kubeconfigPath, kubeconfigYaml, { mode: 0o600 });
 
       // --- CRDs ---
       let installedCRDs: string[] = [];
