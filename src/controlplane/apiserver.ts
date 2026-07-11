@@ -1,5 +1,5 @@
 import { ManagedProcess } from "./process.js";
-import { connectHostFor, getFreePort, hostPort } from "./ports.js";
+import { connectHostFor, getFreePort, hostPort, retryOnBindFailure } from "./ports.js";
 import { restRequest, type RestConfig } from "../client/rest.js";
 import { mergeArgs, renderArgs, type ExtraArgs } from "./args.js";
 
@@ -51,6 +51,16 @@ export class APIServer {
   constructor(private readonly opts: APIServerOptions) {}
 
   async start(): Promise<void> {
+    if (this.opts.securePort !== undefined) {
+      // A caller-fixed port leaves nothing to re-pick: fail immediately.
+      await this.startAttempt();
+      return;
+    }
+    // Retried with a fresh port if another process wins the bind race.
+    await retryOnBindFailure(() => this.startAttempt());
+  }
+
+  private async startAttempt(): Promise<void> {
     const listenAddress = this.opts.listenAddress ?? "127.0.0.1";
     this.port = this.opts.securePort ?? (await getFreePort(listenAddress));
     // Clients (readiness poll, kubeconfig) dial the connect host — loopback

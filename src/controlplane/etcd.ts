@@ -1,5 +1,5 @@
 import { ManagedProcess } from "./process.js";
-import { getFreePort } from "./ports.js";
+import { getFreePort, retryOnBindFailure } from "./ports.js";
 import { mergeArgs, renderArgs, type ExtraArgs } from "./args.js";
 
 export interface EtcdOptions {
@@ -24,6 +24,11 @@ export class Etcd {
   constructor(private readonly opts: EtcdOptions) {}
 
   async start(): Promise<void> {
+    // Retried with a fresh port if another process wins the bind race.
+    await retryOnBindFailure(() => this.startAttempt());
+  }
+
+  private async startAttempt(): Promise<void> {
     // etcd is always loopback-only, as upstream: only the co-located
     // apiserver talks to it, so there is no listen-address option.
     const host = "127.0.0.1";
