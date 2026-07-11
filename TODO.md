@@ -1,12 +1,10 @@
 # TODO
 
-- [ ] npm publish workflow (tag-triggered, `npm pack` sanity check of the file list) — deliberately deferred.
-
 ## Upstream parity gaps (from auditing upstream's test suites)
 
 Features upstream envtest implements and tests that envtest-js doesn't have yet:
 
-- [ ] `CRDInstallOptions` parity: accept in-memory CRD objects alongside paths; `errorIfPathMissing` toggle — NOTE upstream's default is to *silently skip* missing paths ("should not return an error if the directory doesn't exist") while we always throw, a deliberate-for-now deviation; configurable poll interval / max wait.
+- [ ] `CRDInstallOptions` parity (remaining): `errorIfPathMissing` toggle — NOTE upstream's default is to *silently skip* missing paths ("should not return an error if the directory doesn't exist") while we always throw, a deliberate-for-now deviation; configurable poll interval / max wait. (In-memory CRD objects alongside paths: done.)
 - [ ] `AddUser` (plane.AddUser / auth.go CertAuthn): provision additional users with their own client certs, REST config, and kubectl-ready kubeconfig — e.g. for testing RBAC as a non-admin identity.
 - [ ] `UseExistingCluster`: attach to a pre-existing cluster via kubeconfig instead of spawning a control plane (envtest_test.go Stop cleanup test exercises it).
 - [ ] Cache management à la `setup-envtest list`/`cleanup` (store_test.go): enumerate and remove cached binary versions.

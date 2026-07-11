@@ -63,7 +63,7 @@ Same deliberate limits as upstream envtest: this is the API surface only — no 
    - plus an RSA-2048 keypair for genuine service-account token signing (`--service-account-signing-key-file`).
 3. **Process lifecycle** — starts etcd on a free port, then kube-apiserver with the same default flag set as upstream envtest (secure serving only, `--authorization-mode=RBAC`, `ServiceAccount` admission disabled), polls `/readyz` over mTLS, and tears down hard on `stop()` (SIGTERM → SIGKILL, temp dirs removed). Processes are spawned via execa with `cleanup` enabled, so children are killed even when the test runner dies from a signal.
 4. **Client config** — a self-contained kubeconfig (verified in e2e against real `kubectl` and the official `@kubernetes/client-node`) plus in-memory PEM/base64 credentials.
-5. **CRD install** — applies `CustomResourceDefinition` manifests (create-or-replace) and waits for the `Established` condition, like `envtest.InstallCRDs`; `uninstallCRDs` deletes them again (missing ones skipped), like `envtest.UninstallCRDs`.
+5. **CRD install** — applies `CustomResourceDefinition` manifests (create-or-replace), from files/directories and/or in-memory objects, and waits for the `Established` condition, like `envtest.InstallCRDs`; `uninstallCRDs` deletes them again (missing ones skipped), like `envtest.UninstallCRDs`.
 6. **Webhook support** — runs your admission *and CRD conversion* webhooks *in the test process*, like upstream's `WebhookInstallOptions`: a separate throwaway CA mints a serving cert for your HTTPS server; each `(Validating|Mutating)WebhookConfiguration` gets its `clientConfig` rewritten to `https://127.0.0.1:<port><service.path>` with the CA injected as `caBundle`; CRDs declaring `spec.conversion.strategy: Webhook` get the same treatment (defaulting to controller-runtime's `/convert` path). See below.
 
 ## Admission webhooks
@@ -95,6 +95,7 @@ new TestEnvironment({
   version: "1.36",              // exact ("v1.36.2"), semver range ("1.36", ">=1.35 <1.37"), or omit for latest stable
   binaryAssetsDirectory: "...", // skip download, use these binaries
   crdDirectoryPaths: [...],     // CRD manifests to install on start
+  crds: [{ ... }],              // in-memory CRD manifests, installed alongside crdDirectoryPaths
   apiServerFlags: { "max-requests-inflight": "800", "allow-privileged": null }, // override / remove (null) defaults; arrays repeat the flag
   etcdFlags: { ... },
   listenAddress: "172.17.0.1",  // apiserver bind + serving-cert SAN + kubeconfig URL move together

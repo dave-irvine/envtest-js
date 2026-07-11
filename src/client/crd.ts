@@ -10,6 +10,13 @@ import { rewriteConversionWebhooks, type CRDConversionTarget } from "./webhook.j
 const CRD_BASE = "/apis/apiextensions.k8s.io/v1/customresourcedefinitions";
 
 export interface InstallCRDsOptions {
+  /**
+   * In-memory CRD manifests, installed before those read from paths
+   * (upstream: CRDInstallOptions.CRDs). Lets tests generate definitions
+   * programmatically instead of shipping YAML fixtures. The objects are
+   * never mutated.
+   */
+  crds?: CRDManifest[];
   /** Max time to wait for each CRD to reach the Established condition. */
   establishTimeoutMs?: number;
   /**
@@ -24,8 +31,8 @@ export interface InstallCRDsOptions {
 
 /**
  * Install CustomResourceDefinitions from YAML/JSON manifests (files or
- * directories of files) and wait until each reports Established=True,
- * mirroring envtest.InstallCRDs.
+ * directories of files) and/or in-memory objects (opts.crds), and wait until
+ * each reports Established=True, mirroring envtest.InstallCRDs.
  *
  * Returns the names of the CRDs installed.
  */
@@ -34,7 +41,7 @@ export async function installCRDs(
   paths: string[],
   opts: InstallCRDsOptions = {},
 ): Promise<string[]> {
-  let crds = await readCRDManifests(paths);
+  let crds = [...validateCRDManifests(opts.crds ?? []), ...(await readCRDManifests(paths))];
   if (opts.conversionWebhook) {
     const { host, port, caPem } = opts.conversionWebhook;
     crds = rewriteConversionWebhooks(crds, host, port, caPem);
@@ -51,15 +58,19 @@ export async function installCRDs(
 
 /**
  * Delete the CustomResourceDefinitions named by the given YAML/JSON manifests
- * (files or directories of files), mirroring envtest.UninstallCRDs. CRDs that
- * don't exist are skipped. Like upstream, this returns once the delete calls
- * are accepted — the apiserver finishes removal (and drops the served API
- * groups) asynchronously.
+ * (files or directories of files) and/or in-memory objects (opts.crds),
+ * mirroring envtest.UninstallCRDs. CRDs that don't exist are skipped. Like
+ * upstream, this returns once the delete calls are accepted — the apiserver
+ * finishes removal (and drops the served API groups) asynchronously.
  *
  * Returns the names of the CRDs deleted (not-found ones excluded).
  */
-export async function uninstallCRDs(config: RestConfig, paths: string[]): Promise<string[]> {
-  const crds = await readCRDManifests(paths);
+export async function uninstallCRDs(
+  config: RestConfig,
+  paths: string[],
+  opts: Pick<InstallCRDsOptions, "crds"> = {},
+): Promise<string[]> {
+  const crds = [...validateCRDManifests(opts.crds ?? []), ...(await readCRDManifests(paths))];
   const deleted: string[] = [];
   for (const crd of crds) {
     const name = crd.metadata.name;
@@ -75,12 +86,31 @@ export async function uninstallCRDs(config: RestConfig, paths: string[]): Promis
   return deleted;
 }
 
-interface CRDManifest {
+export interface CRDManifest {
   apiVersion: string;
   kind: string;
   metadata: { name: string; resourceVersion?: string };
   spec?: CRDConversionTarget["spec"];
   [key: string]: unknown;
+}
+
+/**
+ * In-memory manifests are trusted as authored (no kind-based filtering like
+ * the file path does) — but a wrong kind or missing name is certainly a
+ * caller bug, so fail loudly instead of letting the apiserver 404 later.
+ */
+function validateCRDManifests(crds: CRDManifest[]): CRDManifest[] {
+  for (const crd of crds) {
+    if (crd.kind !== "CustomResourceDefinition") {
+      throw new Error(
+        `in-memory CRD manifest${crd.metadata?.name ? ` "${crd.metadata.name}"` : ""} has kind ${JSON.stringify(crd.kind)}, expected "CustomResourceDefinition"`,
+      );
+    }
+    if (!crd.metadata?.name) {
+      throw new Error("in-memory CustomResourceDefinition has no metadata.name");
+    }
+  }
+  return crds;
 }
 
 async function readCRDManifests(paths: string[]): Promise<CRDManifest[]> {

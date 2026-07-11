@@ -4,7 +4,12 @@ import path from "node:path";
 
 import { APIServer, type APIServerCertFiles } from "./controlplane/apiserver.js";
 import { resolveBinaries, type BinaryPaths, type ResolveBinariesOptions } from "./setup/assets.js";
-import { installCRDs, uninstallCRDs, type InstallCRDsOptions } from "./client/crd.js";
+import {
+  installCRDs,
+  uninstallCRDs,
+  type CRDManifest,
+  type InstallCRDsOptions,
+} from "./client/crd.js";
 import { Etcd } from "./controlplane/etcd.js";
 import { buildKubeconfig } from "./client/kubeconfig.js";
 import { generateServiceAccountKeys, TinyCA } from "./controlplane/pki.js";
@@ -37,6 +42,11 @@ const ADMIN_GROUPS = ["system:masters"];
 export interface TestEnvironmentOptions extends ResolveBinariesOptions {
   /** CRD manifests (files or directories) to install after startup. */
   crdDirectoryPaths?: string[];
+  /**
+   * In-memory CRD manifests to install after startup, alongside (before)
+   * those from crdDirectoryPaths (upstream: Environment.CRDs).
+   */
+  crds?: CRDManifest[];
   /**
    * Address the apiserver binds and serves on (upstream
    * SecureServing.Address). Defaults to 127.0.0.1 — the safe, hermetic
@@ -281,9 +291,11 @@ export class TestEnvironment {
 
       // --- CRDs ---
       let installedCRDs: string[] = [];
-      if (opts.crdDirectoryPaths?.length) {
-        installedCRDs = await installCRDs(restConfig, opts.crdDirectoryPaths, {
+      const crdObjects = [...(opts.crds ?? []), ...(opts.crdInstallOptions?.crds ?? [])];
+      if (opts.crdDirectoryPaths?.length || crdObjects.length) {
+        installedCRDs = await installCRDs(restConfig, opts.crdDirectoryPaths ?? [], {
           ...opts.crdInstallOptions,
+          crds: crdObjects,
           conversionWebhook:
             opts.crdInstallOptions?.conversionWebhook ?? this.conversionWebhookFor(webhook),
         });
@@ -327,8 +339,8 @@ export class TestEnvironment {
   }
 
   /** Delete the CRDs named by the given manifests from the running environment. */
-  async uninstallCRDs(paths: string[]): Promise<string[]> {
-    return uninstallCRDs(this.config, paths);
+  async uninstallCRDs(paths: string[], opts?: Pick<InstallCRDsOptions, "crds">): Promise<string[]> {
+    return uninstallCRDs(this.config, paths, opts);
   }
 
   /**

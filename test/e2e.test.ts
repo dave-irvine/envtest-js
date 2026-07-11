@@ -137,6 +137,63 @@ describe("e2e: real control plane", () => {
     ]);
   });
 
+  // Upstream: CRDInstallOptions.CRDs — in-memory definitions install
+  // alongside (before) those rendered from paths, and can be uninstalled
+  // the same way.
+  it("installs and uninstalls in-memory CRD manifests alongside paths", async () => {
+    const memoCRD = {
+      apiVersion: "apiextensions.k8s.io/v1",
+      kind: "CustomResourceDefinition",
+      metadata: { name: "memos.inmemory.example.com" },
+      spec: {
+        group: "inmemory.example.com",
+        names: { kind: "Memo", listKind: "MemoList", plural: "memos", singular: "memo" },
+        scope: "Namespaced",
+        versions: [
+          {
+            name: "v1",
+            served: true,
+            storage: true,
+            schema: {
+              openAPIV3Schema: {
+                type: "object",
+                properties: { spec: { type: "object", properties: { text: { type: "string" } } } },
+              },
+            },
+          },
+        ],
+      },
+    };
+    const before = JSON.stringify(memoCRD);
+
+    const names = await installCRDs(config, [path.join(FIXTURES, "crontab-crd.yaml")], {
+      crds: [memoCRD],
+    });
+    expect(names).toEqual(["memos.inmemory.example.com", "crontabs.stable.example.com"]);
+
+    // The CRD is served: create a custom resource against it, exercising the
+    // in-memory schema (unknown fields would be pruned; text survives).
+    const cr = await restRequestOk(
+      config,
+      "POST",
+      "/apis/inmemory.example.com/v1/namespaces/envtest-e2e/memos",
+      {
+        apiVersion: "inmemory.example.com/v1",
+        kind: "Memo",
+        metadata: { name: "m1" },
+        spec: { text: "from memory" },
+      },
+    );
+    expect(cr.json.spec.text).toBe("from memory");
+
+    // The caller's object is applied, not adopted: no mutation.
+    expect(JSON.stringify(memoCRD)).toBe(before);
+
+    expect(await uninstallCRDs(config, [], { crds: [memoCRD] })).toEqual([
+      "memos.inmemory.example.com",
+    ]);
+  });
+
   // Upstream: "should uninstall the CRDs from the cluster". Uses its own
   // fixture (in a subdirectory, invisible to directory-based installs of
   // fixtures/) so shared CRDs other tests rely on stay untouched.
