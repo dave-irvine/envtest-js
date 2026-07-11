@@ -433,6 +433,11 @@ if (!process.versions.bun) {
         expect(user.server).toBe(config.server);
         expect(user.certPem).not.toBe(config.certPem);
 
+        // Upstream auth_test: CertData/KeyData are populated; ours must also
+        // round-trip to the PEMs (they're the kubeconfig field encoding).
+        expect(Buffer.from(user.certData, "base64").toString()).toBe(user.certPem);
+        expect(Buffer.from(user.keyData, "base64").toString()).toBe(user.keyPem);
+
         // The apiserver authenticates the new cert and maps CN -> user,
         // O -> groups.
         const whoami = await restRequestOk(
@@ -466,6 +471,14 @@ if (!process.versions.bun) {
         const colon = await env.addUser({ name: "system:weird" });
         const slash = await env.addUser({ name: "system/weird" });
         expect(colon.kubeconfigPath).not.toBe(slash.kubeconfigPath);
+
+        // Upstream auth_test: "should copy the configuration ... without
+        // modifying it" — caller input is copied, not adopted: mutating the
+        // groups array afterwards must not change the provisioned user.
+        const groups = ["before"];
+        const copied = await env.addUser({ name: "copy-check", groups });
+        groups.push("after");
+        expect(copied.groups).toEqual(["before"]);
       } finally {
         await env.stop();
       }
