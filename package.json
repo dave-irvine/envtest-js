@@ -1,6 +1,6 @@
 {
   "name": "@pixelbitsltd/envtest-js",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Run a real Kubernetes API server (kube-apiserver + etcd) for integration tests, envtest-style, from Node or Bun",
   "license": "Apache-2.0",
   "repository": {
