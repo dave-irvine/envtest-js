@@ -98,6 +98,22 @@ jobs:
           key: envtest-${{ runner.os }}-${{ steps.envtest.outputs.version }}
       - run: bun test --timeout 120000
 
+  # Single stable check for branch protection. Matrix jobs surface as one
+  # check per combination — and version-matrix's names change as upstream
+  # releases — so requiring them individually would drift. Require only
+  # this job.
+  ci-ok:
+    name: CI OK
+    if: always()
+    needs: [check, test, bun, resolve-versions, version-matrix]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # skipped counts as failure: a job skipped because its dependency
+      # failed must not let the gate pass.
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: exit 1
+
   resolve-versions:
     name: Resolve upstream versions
     runs-on: ubuntu-latest
