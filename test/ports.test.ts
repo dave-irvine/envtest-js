@@ -92,6 +92,13 @@ describe("retryOnBindFailure", () => {
     expect((err as Error).message).toMatch(/address already in use/);
   });
 
+  it("rejects a non-finite or non-positive attempt budget", async () => {
+    for (const attempts of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1]) {
+      const err = await retryOnBindFailure(async () => {}, attempts).catch((e: Error) => e);
+      expect((err as Error).message).toMatch(/attempts must be a positive finite number/);
+    }
+  });
+
   it("propagates non-bind failures immediately", async () => {
     let calls = 0;
     const err = await retryOnBindFailure(async () => {
