@@ -1,4 +1,4 @@
-import yaml from "js-yaml";
+import { load as parseYaml } from "js-yaml";
 import { describe, expect, it } from "./helpers/runner.js";
 
 
@@ -13,7 +13,7 @@ describe("buildKubeconfig", () => {
       clientCertPem: "CERT",
       clientKeyPem: "KEY",
     });
-    const config = yaml.load(text) as any;
+    const config = parseYaml(text) as any;
     expect(config.kind).toBe("Config");
     expect(config.clusters[0].cluster.server).toBe("https://127.0.0.1:12345");
     expect(

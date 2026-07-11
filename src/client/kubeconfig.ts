@@ -1,4 +1,4 @@
-import yaml from "js-yaml";
+import { dump as dumpYaml } from "js-yaml";
 
 export interface KubeconfigInput {
   server: string;
@@ -43,5 +43,5 @@ export function buildKubeconfig(input: KubeconfigInput): string {
     ],
     "current-context": cluster,
   };
-  return yaml.dump(config);
+  return dumpYaml(config);
 }

@@ -1,6 +1,6 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
-import yaml from "js-yaml";
+import { loadAll as parseYamlDocuments } from "js-yaml";
 
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -74,7 +74,7 @@ async function readCRDManifests(paths: string[]): Promise<CRDManifest[]> {
   const crds: CRDManifest[] = [];
   for (const file of files) {
     const text = await fsp.readFile(file, "utf8");
-    for (const doc of yaml.loadAll(text)) {
+    for (const doc of parseYamlDocuments(text)) {
       if (!doc || typeof doc !== "object") continue;
       const obj = doc as CRDManifest;
       if (obj.kind === "CustomResourceDefinition") {

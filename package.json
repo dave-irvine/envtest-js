@@ -43,16 +43,16 @@
     }
   },
   "dependencies": {
-    "@peculiar/x509": "^1.12.3",
+    "@peculiar/x509": "^2.0.0",
     "execa": "^9.6.1",
     "get-port": "^7.2.0",
-    "js-yaml": "^4.1.0",
+    "js-yaml": "^5.2.1",
+    "reflect-metadata": "^0.2.2",
     "semver": "^7.8.5",
     "tar": "^7.4.3"
   },
   "devDependencies": {
     "@kubernetes/client-node": "^1.4.0",
-    "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.1.1",
     "@types/semver": "^7.7.1",
     "typescript": "^7.0.2",

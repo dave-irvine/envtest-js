@@ -1,3 +1,6 @@
+// Must precede @peculiar/x509: since v2 it wires itself with tsyringe, which
+// needs the reflect-metadata polyfill loaded first (v1 bundled it).
+import "reflect-metadata";
 import { generateKeyPair, randomBytes, webcrypto } from "node:crypto";
 import { isIP } from "node:net";
 import { promisify } from "node:util";

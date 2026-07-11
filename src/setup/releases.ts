@@ -1,4 +1,4 @@
-import yaml from "js-yaml";
+import { load as parseYaml } from "js-yaml";
 import semver from "semver";
 
 /**
@@ -22,7 +22,7 @@ export interface ReleaseIndex {
 }
 
 export function parseReleaseIndex(text: string): ReleaseIndex {
-  const doc = yaml.load(text) as ReleaseIndex | null | undefined;
+  const doc = parseYaml(text) as ReleaseIndex | null | undefined;
   if (!doc || typeof doc !== "object" || typeof doc.releases !== "object" || doc.releases === null) {
     throw new Error("invalid envtest release index: missing top-level 'releases' map");
   }
