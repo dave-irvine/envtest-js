@@ -84,6 +84,15 @@ describe("listCachedVersions", () => {
     expect(exact.map((c) => c.version)).toEqual(["v1.37.0-alpha.1"]);
   });
 
+  it("rejects an unparseable version filter instead of silently matching nothing", async () => {
+    await expect(listCachedVersions({ dataDir, version: "banana" })).rejects.toThrow(
+      /invalid version filter "banana"/,
+    );
+    await expect(cleanupCachedVersions({ dataDir, version: "banana" })).rejects.toThrow(
+      /invalid version filter/,
+    );
+  });
+
   it("returns an empty list when the cache directory does not exist", async () => {
     const cached = await listCachedVersions({ dataDir: path.join(dataDir, "missing") });
     expect(cached).toEqual([]);

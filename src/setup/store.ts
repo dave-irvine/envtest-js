@@ -25,6 +25,7 @@ export interface CacheFilter {
   /**
    * Version selector: exact ("v1.36.2") or a semver range ("1.36",
    * "<1.30"). Ranges never match prereleases; those must be named exactly.
+   * Anything unparseable throws rather than silently matching nothing.
    */
   version?: string;
   /** GOOS name, e.g. "linux". Defaults to all. */
@@ -40,6 +41,15 @@ export interface CacheFilter {
 // letters only, which keeps download staging dirs ("...-linux-amd64.tmp-1-2")
 // from parsing as versions.
 const ENTRY_RE = /^(v.+)-([a-z]+)-([a-z0-9]+)$/;
+
+function validateVersionFilter(version: string): void {
+  const bare = version.replace(/^v/, "");
+  if (semver.valid(bare) === null && semver.validRange(bare) === null) {
+    throw new Error(
+      `invalid version filter "${version}": expected an exact version ("v1.36.2") or a semver range ("1.36", "<1.30")`,
+    );
+  }
+}
 
 function matches(entry: CachedVersion, filter: CacheFilter): boolean {
   if (filter.os && entry.os !== filter.os) return false;
@@ -59,6 +69,7 @@ function matches(entry: CachedVersion, filter: CacheFilter): boolean {
  * ignored.
  */
 export async function listCachedVersions(filter: CacheFilter = {}): Promise<CachedVersion[]> {
+  if (filter.version) validateVersionFilter(filter.version);
   const k8sDir = path.join(filter.dataDir ?? defaultDataDir(), "k8s");
 
   let names: string[];
